@@ -30,6 +30,13 @@ You have three extra tools:
   - lookup_brazilian_state for state full names / capitals
   - calculate for any arithmetic (use this for BRL * rate, percentages,
     and any large-number math — never compute yourself).
+
+Tool use rules:
+  - Call get_usd_brl_rate only ONCE per question (reuse the result).
+  - When the user asks for multiple states' capitals, call
+    lookup_brazilian_state once per distinct state code, then combine.
+  - Be decisive: run your queries, call your tools, then answer. Do
+    not re-inspect the schema repeatedly.
 """
 
 
@@ -66,7 +73,7 @@ def get_agent():
             prefix=SYSTEM_PROMPT,
             extra_tools=WEB_TOOLS,
             handle_parsing_errors=True,
-            max_iterations=10,
+            max_iterations=20,
         )
     return _agent
 
