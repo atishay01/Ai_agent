@@ -9,6 +9,10 @@ __pycache__/
 # Data (too large for git)
 data/raw/*.csv
 
+# Local helpers (not shared)
+run.bat
+stop.bat
+
 # OS
 Thumbs.db
 .DS_Store
