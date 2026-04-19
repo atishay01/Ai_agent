@@ -1,0 +1,14 @@
+# Secrets
+.env
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Data (too large for git)
+data/raw/*.csv
+
+# OS
+Thumbs.db
+.DS_Store
