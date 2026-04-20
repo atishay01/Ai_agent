@@ -1,12 +1,18 @@
 """
-Streamlit chat UI for the Olist data chatbot.
-Sends each question to the FastAPI /query endpoint and renders the answer.
+Streamlit UI for the Olist data chatbot.
+
+Two views in one app:
+  * Chat      — natural-language questions answered by the LangChain SQL agent
+                via the FastAPI /query endpoint.
+  * Dashboard — business-KPI view that queries Postgres directly (no LLM).
 """
 
 from __future__ import annotations
 
 import requests
 import streamlit as st
+
+import dashboard
 
 API_URL = "http://localhost:8000/query"
 
@@ -24,7 +30,8 @@ st.set_page_config(
 st.title("🛒 Olist E-Commerce Data Assistant")
 st.markdown(
     "Ask business questions in plain English about "
-    "**~570,000 rows** of Brazilian e-commerce data. "
+    "**~570,000 rows** of Brazilian e-commerce data, or open the "
+    "**Dashboard** tab for a BI-style KPI view. "
     "Powered by LangChain + Groq + PostgreSQL, with live currency "
     "conversion and Wikipedia lookups."
 )
@@ -85,46 +92,53 @@ with st.sidebar:
     )
 
 # ---------------------------------------------------------------------
-# Chat state
+# Tabs: Chat vs Dashboard
 # ---------------------------------------------------------------------
-if "messages" not in st.session_state:
-    st.session_state.messages = []
+tab_chat, tab_dashboard = st.tabs(["💬 Chat", "📊 Dashboard"])
 
-# Empty-state welcome
-if not st.session_state.messages:
-    st.info(
-        "👋 Welcome! Pick a sample question from the sidebar, "
-        "or type your own question below. "
-        "I can query the database and look up external data when needed."
-    )
+# =====================================================================
+# Chat tab (existing behaviour)
+# =====================================================================
+with tab_chat:
+    if "messages" not in st.session_state:
+        st.session_state.messages = []
 
-# Render history
-for msg in st.session_state.messages:
-    with st.chat_message(msg["role"]):
-        st.markdown(msg["content"])
+    if not st.session_state.messages:
+        st.info(
+            "👋 Welcome! Pick a sample question from the sidebar, "
+            "or type your own question below. "
+            "I can query the database and look up external data when needed."
+        )
 
-# ---------------------------------------------------------------------
-# Input
-# ---------------------------------------------------------------------
-typed = st.chat_input("Ask a question about the Olist data...")
-question = st.session_state.pop("pending_question", None) or typed
+    for msg in st.session_state.messages:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
 
-if question:
-    st.session_state.messages.append({"role": "user", "content": question})
-    with st.chat_message("user"):
-        st.markdown(question)
+    typed = st.chat_input("Ask a question about the Olist data...")
+    question = st.session_state.pop("pending_question", None) or typed
 
-    with st.chat_message("assistant"):
-        with st.spinner("Thinking..."):
-            try:
-                r = requests.post(API_URL, json={"question": question}, timeout=180)
-                r.raise_for_status()
-                answer = r.json()["answer"]
-            except requests.RequestException as e:
-                answer = (
-                    f"**Could not reach the backend.**\n\n`{e}`\n\n"
-                    "Make sure FastAPI is running: `python src/api.py`"
-                )
-        st.markdown(answer)
+    if question:
+        st.session_state.messages.append({"role": "user", "content": question})
+        with st.chat_message("user"):
+            st.markdown(question)
 
-    st.session_state.messages.append({"role": "assistant", "content": answer})
+        with st.chat_message("assistant"):
+            with st.spinner("Thinking..."):
+                try:
+                    r = requests.post(API_URL, json={"question": question}, timeout=180)
+                    r.raise_for_status()
+                    answer = r.json()["answer"]
+                except requests.RequestException as e:
+                    answer = (
+                        f"**Could not reach the backend.**\n\n`{e}`\n\n"
+                        "Make sure FastAPI is running: `python src/api.py`"
+                    )
+            st.markdown(answer)
+
+        st.session_state.messages.append({"role": "assistant", "content": answer})
+
+# =====================================================================
+# Dashboard tab
+# =====================================================================
+with tab_dashboard:
+    dashboard.render()
