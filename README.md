@@ -1,26 +1,36 @@
 # Olist E-Commerce Data Chatbot
 
-An AI-powered data-query chatbot over the public
+An AI-powered data-query app over the public
 [Brazilian E-Commerce (Olist)](https://www.kaggle.com/datasets/olistbr/brazilian-ecommerce)
-dataset. Users ask business questions in plain English; a LangChain SQL
-agent writes the SQL, queries Postgres, optionally calls web APIs for
-currency / geographic info, and returns a readable answer.
+dataset. **Two interfaces** on the same Postgres warehouse:
+
+- **💬 Chat** — users ask business questions in plain English; a LangChain
+  SQL agent writes the SQL, queries Postgres, optionally calls web APIs
+  for currency / geographic info, and returns a readable answer.
+- **📊 Dashboard** — a BI-style KPI view that queries Postgres directly
+  (no LLM) for fast, deterministic loads. Total revenue, monthly trend,
+  top categories / states, payment mix, review-score distribution.
+
+The split is deliberate: the chatbot is for non-analysts who want ad-hoc
+answers; the dashboard is for analysts who want shape-at-a-glance.
 
 ## Architecture
 
 ```
 9 CSVs ─► ETL (Pandas) ─► PostgreSQL (8 tables, ~570K rows)
                                 │
-                                ▼
-                      LangChain SQL Agent (Groq)
-                      ├── SQL Toolkit
-                      ├── get_usd_brl_rate  (requests + JSON API)
-                      ├── lookup_brazilian_state  (BeautifulSoup + Wikipedia)
-                      └── calculate  (exact arithmetic)
-                                │
-                                ▼
-                       FastAPI  ──►  Streamlit UI
-                        :8000          :8501
+                 ┌──────────────┴──────────────┐
+                 ▼                             ▼
+       LangChain SQL Agent (Groq)     Dashboard SQL (cached)
+       ├── SQL Toolkit                ├── KPIs (revenue, AOV, on-time)
+       ├── get_usd_brl_rate           ├── Monthly trend
+       ├── lookup_brazilian_state     ├── Category / state breakdowns
+       └── calculate                  └── Payment mix, reviews
+                 │                             │
+                 ▼                             ▼
+              FastAPI  ────────►  Streamlit UI (tabbed)
+               :8000                    :8501
+                                  💬 Chat  |  📊 Dashboard
 ```
 
 ## Tech stack
@@ -79,7 +89,10 @@ Foreign keys and indexes on all join columns. Full DDL in
    python src/api.py              # FastAPI on :8000
    streamlit run src/app.py       # Streamlit on :8501
    ```
-9. Open http://localhost:8501.
+9. Open http://localhost:8501. Use the **💬 Chat** tab to ask
+   natural-language questions, or the **📊 Dashboard** tab for the
+   BI-style KPI view. The Dashboard tab works even without FastAPI
+   running — it queries Postgres directly.
 
 ## Sample questions
 
@@ -131,7 +144,8 @@ Foreign keys and indexes on all join columns. Full DDL in
 │   ├── web_tools.py       # currency, Wikipedia, calculator
 │   ├── agent.py           # LangChain SQL agent
 │   ├── api.py             # FastAPI backend
-│   └── app.py             # Streamlit chat UI
+│   ├── app.py             # Streamlit UI — Chat + Dashboard tabs
+│   └── dashboard.py       # Dashboard queries + rendering (direct Postgres, no LLM)
 ├── .env.example
 ├── .gitignore
 └── requirements.txt
