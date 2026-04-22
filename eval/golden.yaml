@@ -1,0 +1,55 @@
+# Golden evaluation set for the Olist SQL agent.
+#
+# Each entry is run through agent.ask() and must contain every string in
+# `contains` (case-insensitive) to count as a pass. Optional fields:
+#   max_latency_ms — flag the run if it takes longer than this
+#   skip_cache     — pass through a throwaway session_id so the cache
+#                    doesn't mask the real LLM behavior
+#
+# Keep answers deterministic. Only pick questions whose ground truth is
+# known from the raw CSV counts or the hard-coded web-tool lookup tables.
+
+- id: orders_count
+  question: How many orders are in the database?
+  contains: ["99,441"]
+  max_latency_ms: 15000
+
+- id: customers_count
+  question: How many customers are in the database?
+  contains: ["99,441"]
+  max_latency_ms: 15000
+
+- id: sellers_count
+  question: How many sellers are in the database?
+  contains: ["3,095"]
+  max_latency_ms: 15000
+
+- id: products_count
+  question: How many products are in the database?
+  contains: ["32,951"]
+  max_latency_ms: 15000
+
+- id: top_revenue_category
+  question: Which product category has the highest total revenue? Answer with the English category name only.
+  contains: ["health_beauty"]
+  max_latency_ms: 30000
+
+- id: most_common_payment
+  question: What is the most common payment type in the database?
+  contains: ["credit_card"]
+  max_latency_ms: 15000
+
+- id: state_rj_capital
+  question: What is the capital of Brazilian state RJ?
+  contains: ["Rio de Janeiro"]
+  max_latency_ms: 15000
+
+- id: state_sp_fullname
+  question: What is the full name of Brazilian state SP?
+  contains: ["São Paulo"]
+  max_latency_ms: 15000
+
+- id: top_state_by_orders
+  question: Which Brazilian state has the most orders? Answer with the two-letter state code.
+  contains: ["SP"]
+  max_latency_ms: 30000

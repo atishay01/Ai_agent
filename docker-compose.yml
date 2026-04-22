@@ -1,0 +1,89 @@
+# One-command stack: Postgres + FastAPI + Streamlit.
+#
+# Usage
+# -----
+#   cp .env.example .env         # then edit GROQ_API_KEY + PG_PASSWORD
+#   docker compose up --build
+#
+# Seed the DB (one-off, after the db container is healthy):
+#   docker compose run --rm api python src/etl.py
+#
+# Open the UI at http://localhost:8501 and the API at http://localhost:8000.
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: olist_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${PG_DATABASE:-olist_db}
+      POSTGRES_USER: ${PG_USER:-postgres}
+      POSTGRES_PASSWORD: ${PG_PASSWORD:-postgres}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./data:/data:ro
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${PG_USER:-postgres} -d ${PG_DATABASE:-olist_db}",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build: .
+    image: olist-agent:latest
+    container_name: olist_api
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PG_HOST: db
+      PG_PORT: 5432
+      PG_USER: ${PG_USER:-postgres}
+      PG_PASSWORD: ${PG_PASSWORD:-postgres}
+      PG_DATABASE: ${PG_DATABASE:-olist_db}
+      GROQ_API_KEY: ${GROQ_API_KEY}
+      GROQ_MODEL: ${GROQ_MODEL:-openai/gpt-oss-20b}
+      API_KEY: ${API_KEY:-}
+      RATE_LIMIT: ${RATE_LIMIT:-30/minute}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data:ro
+      - ./logs:/app/logs
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  ui:
+    build: .
+    image: olist-agent:latest
+    container_name: olist_ui
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      API_URL: http://api:8000/query
+      SESSION_DELETE_URL: http://api:8000/session
+    ports:
+      - "8501:8501"
+    command:
+      - streamlit
+      - run
+      - src/app.py
+      - --server.address=0.0.0.0
+      - --server.port=8501
+      - --server.headless=true
+
+volumes:
+  pgdata:

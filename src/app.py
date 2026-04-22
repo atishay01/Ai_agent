@@ -10,6 +10,7 @@ Two views in one app:
 from __future__ import annotations
 
 import contextlib
+import os
 import uuid
 
 import requests
@@ -17,7 +18,8 @@ import streamlit as st
 
 import dashboard
 
-API_URL = "http://localhost:8000/query"
+API_URL = os.environ.get("API_URL", "http://localhost:8000/query")
+SESSION_DELETE_URL = os.environ.get("SESSION_DELETE_URL", "http://localhost:8000/session")
 
 # ---------------------------------------------------------------------
 st.set_page_config(
@@ -75,7 +77,7 @@ with st.sidebar:
         old_sid = st.session_state.get("session_id")
         if old_sid:
             with contextlib.suppress(requests.RequestException):
-                requests.delete(f"http://localhost:8000/session/{old_sid}", timeout=5)
+                requests.delete(f"{SESSION_DELETE_URL}/{old_sid}", timeout=5)
         st.session_state["session_id"] = uuid.uuid4().hex
         st.rerun()
 

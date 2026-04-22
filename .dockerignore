@@ -1,0 +1,24 @@
+.git
+.github
+.venv
+__pycache__
+**/__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+.ruff_cache
+.mypy_cache
+logs
+data/raw
+*.pdf
+*.md
+!README.md
+.env
+.env.*
+!.env.example
+tests
+eval
+Chat pdf.pdf
+Dashboard pdf.pdf
+run.bat
