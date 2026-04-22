@@ -43,16 +43,19 @@ answers; the dashboard is for analysts who want shape-at-a-glance.
 
 ## Tech stack
 
-| Layer       | Choice                                         |
-|-------------|------------------------------------------------|
-| Language    | Python 3.11                                    |
-| Warehouse   | PostgreSQL 16                                  |
-| ETL         | Pandas, SQLAlchemy                             |
-| LLM         | Groq (`openai/gpt-oss-20b`)                    |
-| Agent       | LangChain `create_sql_agent` + custom tools    |
-| Backend     | FastAPI                                        |
-| Frontend    | Streamlit                                      |
-| Web data    | Requests, BeautifulSoup                        |
+| Layer         | Choice                                       |
+|---------------|----------------------------------------------|
+| Language      | Python 3.11                                  |
+| Warehouse     | PostgreSQL 16                                |
+| ETL           | Pandas, SQLAlchemy                           |
+| LLM           | Groq (`openai/gpt-oss-20b`)                  |
+| Agent         | LangChain `create_sql_agent` + custom tools  |
+| Backend       | FastAPI + slowapi rate-limiting              |
+| Frontend      | Streamlit (Chat + Dashboard tabs)            |
+| Web data      | Requests, BeautifulSoup                      |
+| Tests         | pytest (90+ tests, mocked externals)         |
+| Lint / format | ruff + black, enforced in CI                 |
+| Packaging     | Multi-stage Dockerfile + docker-compose      |
 
 ## Data model
 
@@ -64,43 +67,64 @@ answers; the dashboard is for analysts who want shape-at-a-glance.
 Foreign keys and indexes on all join columns. Full DDL in
 [`src/schema.sql`](src/schema.sql).
 
-## Setup
+## Production features
 
-1. **Install** Python 3.11, PostgreSQL 16, and Git.
-2. **Clone**
-   ```
-   git clone https://github.com/atishay01/Ai_agent.git
-   cd Ai_agent
-   ```
-3. **Create venv and install deps**
-   ```
-   py -3.11 -m venv .venv
-   .venv\Scripts\activate
-   pip install -r requirements.txt
-   ```
-4. **Download** the 9 Olist CSVs from
+| Feature                  | Where it lives                                            |
+|--------------------------|-----------------------------------------------------------|
+| **Per-session memory**   | `src/agent.py` keeps the last 6 turns per `session_id`.   |
+| **LRU response cache**   | `src/cache.py` — 128-entry bounded, normalized-question key. |
+| **Token + cost tracking**| `src/callbacks.py` reads the three token-usage shapes ChatGroq emits. |
+| **Prometheus-ish metrics** | `GET /metrics` → queries, failures, tokens, cache hits, $ estimate. |
+| **Session reset API**    | `DELETE /session/{session_id}` drops server-side history. |
+| **Rate limiting**        | slowapi on `/query`, 30 req/min default (configurable).   |
+| **Structured logging**   | Loguru, JSON-friendly format, `logs/app.log` ships outside the image. |
+| **Health check**         | `/health` endpoint used by the Docker `HEALTHCHECK`.      |
+| **Trace panel**          | Streamlit renders `intermediate_steps` with SQL syntax highlighting. |
+| **Golden eval suite**    | `eval/run_eval.py` runs 9 cases end-to-end, prints pass/fail + latency + $. |
+| **CI**                   | GitHub Actions: ruff + black + pytest on every push.      |
+
+Latest end-to-end eval run (dockerized stack):
+
+```
+Passed: 9/9 (100.0%)    Avg latency: 4321 ms    Total tokens: 35,473 (~$0.0027)
+```
+
+## Quick start — Docker (recommended)
+
+One command brings up Postgres + FastAPI + Streamlit:
+
+```
+cp .env.example .env         # then edit GROQ_API_KEY + PG_PASSWORD
+docker compose up --build
+```
+
+Seed the database (one-off, after `olist_db` is healthy):
+
+```
+docker compose run --rm api python src/etl.py
+```
+
+Open http://localhost:8501 for the UI and http://localhost:8000/health
+for the API. Tear down with `docker compose down -v`.
+
+## Manual setup (without Docker)
+
+1. Install Python 3.11, PostgreSQL 16, and Git.
+2. `git clone https://github.com/atishay01/Ai_agent.git && cd Ai_agent`
+3. `py -3.11 -m venv .venv && .venv\Scripts\activate && pip install -r requirements.txt`
+4. Download the 9 Olist CSVs from
    [Kaggle](https://www.kaggle.com/datasets/olistbr/brazilian-ecommerce)
    into `data/raw/`.
-5. **Create the database**
-   ```
-   psql -U postgres -c "CREATE DATABASE olist_db;"
-   ```
-6. **Configure secrets** — copy `.env.example` to `.env` and fill in
-   your Postgres password and a free Groq API key.
-7. **Run the ETL pipeline**
-   ```
-   python src/etl.py
-   ```
-   Loads ~570K rows across 8 tables in about 90 seconds.
-8. **Start the backend and UI** (two terminals)
+5. `psql -U postgres -c "CREATE DATABASE olist_db;"`
+6. Copy `.env.example` to `.env` and fill in `PG_PASSWORD` + `GROQ_API_KEY`.
+7. `python src/etl.py` — loads ~570K rows across 8 tables in ~90 s.
+8. In two terminals:
    ```
    python src/api.py              # FastAPI on :8000
    streamlit run src/app.py       # Streamlit on :8501
    ```
-9. Open http://localhost:8501. Use the **💬 Chat** tab to ask
-   natural-language questions, or the **📊 Dashboard** tab for the
-   BI-style KPI view. The Dashboard tab works even without FastAPI
-   running — it queries Postgres directly.
+9. Open http://localhost:8501. The **📊 Dashboard** tab works even
+   without FastAPI — it queries Postgres directly.
 
 ## Sample questions
 
@@ -129,15 +153,56 @@ Foreign keys and indexes on all join columns. Full DDL in
   full state names and capitals — demonstrating that answers can
   come from outside the database when needed.
 
+- **Cache key normalization**: the LRU cache keys questions by their
+  lower-cased, whitespace-collapsed form so "How many orders?" and
+  "how   many orders?" hit the same slot. Cache hits skip the LLM
+  entirely and return in <5 ms, which the /metrics endpoint surfaces.
+
+- **Token accounting**: ChatGroq emits usage metadata in three
+  different shapes across model versions (`LLMResult.llm_output`,
+  `AIMessage.usage_metadata`, `AIMessage.response_metadata`). The
+  callback handler reads all three with a priority order so the
+  counters are never silently zero.
+
+## Testing
+
+```
+pytest -q                        # full suite (~90 tests, fully mocked)
+pytest tests/test_agent.py -v    # one module
+```
+
+External services (Postgres, Groq, Wikipedia, Frankfurter) are mocked
+with `unittest.mock` — the suite runs offline and CI doesn't need
+any real credentials. Ruff + Black run in the same CI job.
+
+## Evaluation
+
+A small golden set of questions with expected-substring assertions
+(and per-case latency budgets):
+
+```
+# inside the container:
+docker compose exec api python eval/run_eval.py
+
+# subset:
+python eval/run_eval.py --only orders_count,top_revenue_category
+
+# machine-readable:
+python eval/run_eval.py --json report.json
+```
+
+Exits non-zero on any failure, so it slots into CI once Postgres +
+Groq are reachable from the runner.
+
 ## Limitations
 
-- Only tested manually; no automated test suite.
 - The free Groq tier has a daily token cap; heavy use falls back to a
   friendly error message from FastAPI.
 - Wikipedia scraping is structure-dependent; if the target page layout
   changes, the scraper may need updating.
-- Runs locally only. To deploy, Postgres, FastAPI and Streamlit would
-  each need their own host (e.g. Supabase + Render + Streamlit Cloud).
+- Runs locally only. For production, Postgres, FastAPI, and Streamlit
+  would each need their own host (e.g. Supabase + Render + Streamlit
+  Cloud).
 
 ## Project layout
 
@@ -150,10 +215,21 @@ Foreign keys and indexes on all join columns. Full DDL in
 │   ├── db.py              # Postgres connection helper
 │   ├── etl.py             # Pandas ETL pipeline
 │   ├── web_tools.py       # currency, Wikipedia, calculator
-│   ├── agent.py           # LangChain SQL agent
-│   ├── api.py             # FastAPI backend
+│   ├── agent.py           # LangChain SQL agent + per-session memory
+│   ├── callbacks.py       # TokenUsageCallback — reads 3 LLM usage shapes
+│   ├── cache.py           # Bounded LRU response cache
+│   ├── metrics.py         # Thread-safe counters for /metrics
+│   ├── api.py             # FastAPI backend (/query, /metrics, /session, /health)
 │   ├── app.py             # Streamlit UI — Chat + Dashboard tabs
-│   └── dashboard.py       # Dashboard queries + rendering (direct Postgres, no LLM)
+│   └── dashboard.py       # Dashboard queries + rendering (direct Postgres)
+├── tests/                 # 90+ pytest cases; external services mocked
+├── eval/
+│   ├── golden.yaml        # 9-case golden set
+│   └── run_eval.py        # CLI harness, prints report + exits non-zero on fail
+├── .github/workflows/ci.yml   # ruff + black + pytest on every push
+├── Dockerfile             # Multi-stage (builder + slim runtime, non-root user)
+├── docker-compose.yml     # db + api + ui with healthchecks
+├── .dockerignore
 ├── .env.example
 ├── .gitignore
 └── requirements.txt
