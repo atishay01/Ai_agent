@@ -46,7 +46,9 @@ class CaseResult:
 
 
 def _normalize(text: str) -> str:
-    return text.lower()
+    # Collapse all Unicode whitespace (incl. narrow no-break space U+202F)
+    # to single ASCII spaces so "São Paulo" matches "São\u202fPaulo".
+    return " ".join(text.split()).lower()
 
 
 def score_case(expected: list[str], answer: str) -> list[str]:
