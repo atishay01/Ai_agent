@@ -171,22 +171,26 @@ def clear_session(session_id: str) -> None:
 def ask(question: str, session_id: str | None = None) -> dict:
     """Run a single question through the agent.
 
-    * Stateless calls (``session_id is None``) hit the LRU cache first.
-    * Sessioned calls skip the cache — prior context is part of the key
-      but we keep the cache simple and only memoize stateless lookups.
+    The response cache is checked first regardless of ``session_id`` —
+    identical literal questions short-circuit the LLM call. When a
+    session is active, the cached answer is still threaded into the
+    session history so follow-ups stay coherent.
     """
-    if session_id is None:
-        cached = CACHE.get(question)
-        if cached is not None:
-            cached["cached"] = True
-            _log.bind(question=question).info("cache hit")
-            return cached
+    cached = CACHE.get(question)
+    if cached is not None:
+        result = dict(cached)
+        result["cached"] = True
+        if session_id:
+            _history[session_id].append(f"User: {question}")
+            _history[session_id].append(f"Assistant: {result['answer']}")
+        _log.bind(question=question, session_id=session_id).info("cache hit")
+        return result
 
     cb = TokenUsageCallback()
     prompt_input = _build_input(question, session_id)
 
     try:
-        result = get_agent().invoke(
+        invoke_result = get_agent().invoke(
             {"input": prompt_input},
             config={"callbacks": [cb]},
         )
@@ -194,8 +198,8 @@ def ask(question: str, session_id: str | None = None) -> dict:
         METRICS.record_query(cb.prompt_tokens, cb.completion_tokens, failed=True)
         raise
 
-    answer = result.get("output", "No answer.")
-    steps = _serialize_steps(result.get("intermediate_steps"))
+    answer = invoke_result.get("output", "No answer.")
+    steps = _serialize_steps(invoke_result.get("intermediate_steps"))
 
     METRICS.record_query(cb.prompt_tokens, cb.completion_tokens, failed=False)
 
@@ -212,9 +216,7 @@ def ask(question: str, session_id: str | None = None) -> dict:
         "cached": False,
     }
 
-    if session_id is None:
-        CACHE.set(question, response)
-
+    CACHE.set(question, response)
     return response
 
 
