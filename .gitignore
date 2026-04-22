@@ -4,7 +4,16 @@
 # Python
 __pycache__/
 *.pyc
+*.pyo
 .venv/
+
+# Logs (structured JSON from loguru)
+logs/
+
+# Tooling caches
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
 
 # Data (too large for git)
 data/raw/*.csv

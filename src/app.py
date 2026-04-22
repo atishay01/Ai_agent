@@ -9,6 +9,9 @@ Two views in one app:
 
 from __future__ import annotations
 
+import contextlib
+import uuid
+
 import requests
 import streamlit as st
 
@@ -68,6 +71,12 @@ with st.sidebar:
     st.divider()
     if st.button("🔄 Clear chat", use_container_width=True):
         st.session_state.messages = []
+        # Rotate the session id so the backend drops prior-turn context too.
+        old_sid = st.session_state.get("session_id")
+        if old_sid:
+            with contextlib.suppress(requests.RequestException):
+                requests.delete(f"http://localhost:8000/session/{old_sid}", timeout=5)
+        st.session_state["session_id"] = uuid.uuid4().hex
         st.rerun()
 
     with st.expander("📊 Tables loaded (8)", expanded=False):
@@ -102,6 +111,8 @@ tab_chat, tab_dashboard = st.tabs(["💬 Chat", "📊 Dashboard"])
 with tab_chat:
     if "messages" not in st.session_state:
         st.session_state.messages = []
+    if "session_id" not in st.session_state:
+        st.session_state["session_id"] = uuid.uuid4().hex
 
     if not st.session_state.messages:
         st.info(
@@ -113,6 +124,36 @@ with tab_chat:
     for msg in st.session_state.messages:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
+            if msg["role"] == "assistant":
+                meta = msg.get("meta") or {}
+                if meta:
+                    badges = []
+                    if meta.get("cached"):
+                        badges.append("🟢 cached")
+                    if meta.get("latency_ms") is not None:
+                        badges.append(f"⏱ {meta['latency_ms']} ms")
+                    tt = (meta.get("prompt_tokens") or 0) + (meta.get("completion_tokens") or 0)
+                    if tt:
+                        badges.append(f"🔢 {tt} tokens")
+                    if badges:
+                        st.caption("  ·  ".join(badges))
+                steps = msg.get("steps") or []
+                if steps:
+                    with st.expander(
+                        f"🔍 Trace ({len(steps)} step{'s' if len(steps) != 1 else ''})",
+                        expanded=False,
+                    ):
+                        for i, s in enumerate(steps, 1):
+                            tool = s.get("tool", "")
+                            st.markdown(f"**Step {i} — `{tool}`**")
+                            lang = (
+                                "sql"
+                                if "sql" in tool.lower() or "query" in tool.lower()
+                                else "text"
+                            )
+                            st.code(s.get("tool_input", ""), language=lang)
+                            st.caption("Result:")
+                            st.code((s.get("observation") or "")[:500], language="text")
 
     typed = st.chat_input("Ask a question about the Olist data...")
     question = st.session_state.pop("pending_question", None) or typed
@@ -124,10 +165,19 @@ with tab_chat:
 
         with st.chat_message("assistant"):
             with st.spinner("Thinking..."):
+                data: dict = {}
                 try:
-                    r = requests.post(API_URL, json={"question": question}, timeout=180)
+                    r = requests.post(
+                        API_URL,
+                        json={
+                            "question": question,
+                            "session_id": st.session_state["session_id"],
+                        },
+                        timeout=180,
+                    )
                     r.raise_for_status()
-                    answer = r.json()["answer"]
+                    data = r.json()
+                    answer = data.get("answer", "No answer.")
                 except requests.RequestException as e:
                     answer = (
                         f"**Could not reach the backend.**\n\n`{e}`\n\n"
@@ -135,7 +185,45 @@ with tab_chat:
                     )
             st.markdown(answer)
 
-        st.session_state.messages.append({"role": "assistant", "content": answer})
+            meta = {
+                "cached": bool(data.get("cached")),
+                "latency_ms": data.get("latency_ms"),
+                "prompt_tokens": data.get("prompt_tokens", 0),
+                "completion_tokens": data.get("completion_tokens", 0),
+            }
+            steps = data.get("steps") or []
+            if meta["cached"] or meta["latency_ms"] is not None or steps:
+                badges = []
+                if meta["cached"]:
+                    badges.append("🟢 cached")
+                if meta["latency_ms"] is not None:
+                    badges.append(f"⏱ {meta['latency_ms']} ms")
+                tt = meta["prompt_tokens"] + meta["completion_tokens"]
+                if tt:
+                    badges.append(f"🔢 {tt} tokens")
+                if badges:
+                    st.caption("  ·  ".join(badges))
+            if steps:
+                with st.expander(
+                    f"🔍 Trace ({len(steps)} step{'s' if len(steps) != 1 else ''})",
+                    expanded=False,
+                ):
+                    for i, s in enumerate(steps, 1):
+                        tool = s.get("tool", "")
+                        st.markdown(f"**Step {i} — `{tool}`**")
+                        lang = "sql" if "sql" in tool.lower() or "query" in tool.lower() else "text"
+                        st.code(s.get("tool_input", ""), language=lang)
+                        st.caption("Result:")
+                        st.code((s.get("observation") or "")[:500], language="text")
+
+        st.session_state.messages.append(
+            {
+                "role": "assistant",
+                "content": answer,
+                "meta": meta,
+                "steps": steps,
+            }
+        )
 
 # =====================================================================
 # Dashboard tab

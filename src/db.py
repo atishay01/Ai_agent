@@ -1,29 +1,22 @@
 """Database connection helper.
 
-Centralises the Postgres connection string so every script
-reads credentials from .env the same way.
+Centralises the Postgres connection so every script reads credentials
+from a single typed `Settings` object (see `config.py`).
 """
 
-import os
-from dotenv import load_dotenv
+from __future__ import annotations
+
 from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
 
-load_dotenv()
+from config import settings
 
 
 def get_engine() -> Engine:
     """Return a SQLAlchemy engine for the Olist database."""
-    url = (
-        f"postgresql+psycopg2://{os.getenv('PG_USER')}:{os.getenv('PG_PASSWORD')}"
-        f"@{os.getenv('PG_HOST')}:{os.getenv('PG_PORT')}/{os.getenv('PG_DATABASE')}"
-    )
-    return create_engine(url, pool_pre_ping=True)
+    return create_engine(settings.database_url, pool_pre_ping=True)
 
 
 def get_connection_string() -> str:
     """Plain connection URL (used by LangChain's SQLDatabase)."""
-    return (
-        f"postgresql+psycopg2://{os.getenv('PG_USER')}:{os.getenv('PG_PASSWORD')}"
-        f"@{os.getenv('PG_HOST')}:{os.getenv('PG_PORT')}/{os.getenv('PG_DATABASE')}"
-    )
+    return settings.database_url

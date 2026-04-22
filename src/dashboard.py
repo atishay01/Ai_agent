@@ -6,6 +6,7 @@ Rendered as a Streamlit tab alongside the chatbot. Queries Postgres directly
 Dataset is historical (2016-09 to 2018-10), so KPIs are framed as
 "latest month in data" + "all-time" rather than real current-month figures.
 """
+
 from __future__ import annotations
 
 import pandas as pd
@@ -283,11 +284,17 @@ def render() -> None:
         st.markdown("#### Review score distribution")
         rv = _review_score_distribution()
         if not rv.empty:
-            rv_display = rv.rename(columns={"review_score": "Score", "reviews": "Reviews"}).set_index("Score")
+            rv_display = rv.rename(
+                columns={"review_score": "Score", "reviews": "Reviews"}
+            ).set_index("Score")
             st.bar_chart(rv_display, height=340)
             total = rv.reviews.sum()
-            five_star = rv.loc[rv.review_score == 5, "reviews"].sum() if 5 in rv.review_score.values else 0
-            one_star = rv.loc[rv.review_score == 1, "reviews"].sum() if 1 in rv.review_score.values else 0
+            five_star = (
+                rv.loc[rv.review_score == 5, "reviews"].sum() if 5 in rv.review_score.values else 0
+            )
+            one_star = (
+                rv.loc[rv.review_score == 1, "reviews"].sum() if 1 in rv.review_score.values else 0
+            )
             st.caption(
                 f"**{five_star / total * 100:.1f}%** of reviews are 5-star, "
                 f"but **{one_star / total * 100:.1f}%** are 1-star — a bimodal "

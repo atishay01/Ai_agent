@@ -19,8 +19,9 @@ def get_usd_brl_rate() -> str:
     """Return the current Brazilian Real (BRL) to US Dollar (USD) rate.
     All prices in the database are in BRL; use this when the user asks
     for anything in USD."""
-    r = requests.get("https://api.frankfurter.app/latest",
-                     params={"from": "BRL", "to": "USD"}, timeout=5)
+    r = requests.get(
+        "https://api.frankfurter.app/latest", params={"from": "BRL", "to": "USD"}, timeout=5
+    )
     r.raise_for_status()
     data = r.json()
     rate = data["rates"]["USD"]
@@ -47,19 +48,25 @@ def lookup_brazilian_state(state_code: str) -> str:
             # The cell immediately before the code cell is the state name,
             # the one immediately after is usually the capital.
             i = cells.index(code)
-            name    = cells[i - 1] if i - 1 >= 0 else "?"
+            name = cells[i - 1] if i - 1 >= 0 else "?"
             capital = cells[i + 1] if i + 1 < len(cells) else "?"
             return f"{code} = {name} (capital: {capital})"
     return f"No Brazilian state found for code '{code}'."
 
 
 # ---------- Tool 3: exact calculator ---------------------------------
-_OPS = {ast.Add: op.add, ast.Sub: op.sub, ast.Mult: op.mul,
-        ast.Div: op.truediv, ast.Pow: op.pow, ast.USub: op.neg}
+_OPS = {
+    ast.Add: op.add,
+    ast.Sub: op.sub,
+    ast.Mult: op.mul,
+    ast.Div: op.truediv,
+    ast.Pow: op.pow,
+    ast.USub: op.neg,
+}
 
 
 def _eval(node):
-    if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+    if isinstance(node, ast.Constant) and isinstance(node.value, int | float):
         return node.value
     if isinstance(node, ast.UnaryOp) and type(node.op) in _OPS:
         return _OPS[type(node.op)](_eval(node.operand))
@@ -77,8 +84,7 @@ def calculate(expression: str) -> str:
     """
     try:
         val = _eval(ast.parse(expression, mode="eval").body)
-        return f"{expression} = {val:,.2f}" if isinstance(val, float) \
-               else f"{expression} = {val}"
+        return f"{expression} = {val:,.2f}" if isinstance(val, float) else f"{expression} = {val}"
     except Exception as e:
         return f"Could not evaluate '{expression}': {e}"
 

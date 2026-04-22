@@ -1,0 +1,63 @@
+[project]
+name = "olist-ai-agent"
+version = "1.1.0"
+description = "LangChain SQL agent + FastAPI + Streamlit over the Olist Brazilian e-commerce dataset."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+
+# ----------------------------------------------------------------------
+# Black — formatter
+# ----------------------------------------------------------------------
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+    \.venv
+  | \.git
+  | __pycache__
+  | data
+  | logs
+)/
+'''
+
+# ----------------------------------------------------------------------
+# Ruff — linter
+# ----------------------------------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = [".venv", "data", "logs", "__pycache__"]
+
+[tool.ruff.lint]
+# E/W = pycodestyle, F = pyflakes, I = isort, UP = pyupgrade,
+# B = bugbear, SIM = simplify, C4 = comprehensions
+select = ["E", "W", "F", "I", "UP", "B", "SIM", "C4"]
+ignore = [
+    "E501",  # line length handled by black
+    "B008",  # FastAPI uses `Depends()` in defaults — intentional
+    "UP007", # keep `Optional[X]` / `Union[X, Y]` readable for now
+]
+
+[tool.ruff.lint.per-file-ignores]
+"src/etl.py"       = ["E741"]  # allow single-letter `s` in groupby lambdas
+"tests/*"          = ["B018"]  # allow useless expressions in tests
+
+[tool.ruff.lint.isort]
+known-first-party = ["agent", "api", "app", "config", "dashboard", "db", "etl", "logging_setup", "web_tools"]
+
+# ----------------------------------------------------------------------
+# Pytest (will be used in Phase 2)
+# ----------------------------------------------------------------------
+[tool.pytest.ini_options]
+minversion = "7.0"
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-ra --strict-markers"
+asyncio_default_fixture_loop_scope = "function"
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::pytest.PytestDeprecationWarning",
+]

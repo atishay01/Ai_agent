@@ -1,5 +1,6 @@
 # Olist E-Commerce Data Chatbot
 
+[![CI](https://github.com/atishay01/Ai_agent/actions/workflows/ci.yml/badge.svg)](https://github.com/atishay01/Ai_agent/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/python-3.11-blue?logo=python&logoColor=white)](https://www.python.org/)
 [![LangChain](https://img.shields.io/badge/LangChain-SQL%20Agent-1C3C3C?logo=langchain)](https://python.langchain.com/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.110-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
