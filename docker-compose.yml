@@ -75,6 +75,13 @@ services:
     environment:
       API_URL: http://api:8000/query
       SESSION_DELETE_URL: http://api:8000/session
+      # Dashboard tab queries Postgres directly (no LLM), so the UI
+      # container needs its own DB credentials — not just API_URL.
+      PG_HOST: db
+      PG_PORT: 5432
+      PG_USER: ${PG_USER:-postgres}
+      PG_PASSWORD: ${PG_PASSWORD:-postgres}
+      PG_DATABASE: ${PG_DATABASE:-olist_db}
     ports:
       - "8501:8501"
     command:
