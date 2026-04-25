@@ -55,6 +55,30 @@ class Settings(BaseSettings):
     # e.g. "30/minute", "500/hour". Empty string disables rate limiting.
     rate_limit: str = Field(default="30/minute")
 
+    # --- Agent runtime ---------------------------------------------
+    # Hard cap on tool-calling iterations per question.
+    agent_max_iterations: int = Field(default=20)
+    # How many user/assistant *turns* to keep in per-session memory
+    # (one turn = one user msg + one assistant msg → 2 history entries).
+    session_history_turns: int = Field(default=6)
+    # In-memory response cache size (entries).
+    cache_max_size: int = Field(default=128)
+
+    # --- SQL guardrail ----------------------------------------------
+    # Auto-append `LIMIT <n>` to any SELECT that has no LIMIT, so a
+    # buggy or coerced agent query can't dump whole tables.
+    sql_max_rows: int = Field(default=1000)
+
+    # --- Web tools --------------------------------------------------
+    # How long to cache the BRL/USD exchange rate (seconds). Frankfurter
+    # only updates daily, so anything <24h is fine.
+    exchange_rate_ttl_seconds: int = Field(default=3600)
+
+    # --- Cost estimation (placeholders for free Groq tier) ----------
+    # USD per 1M tokens. Edit when switching to a priced LLM endpoint.
+    prompt_cost_per_1m_usd: float = Field(default=0.05)
+    completion_cost_per_1m_usd: float = Field(default=0.10)
+
     # ----------------------------------------------------------------
     @property
     def database_url(self) -> str:

@@ -26,13 +26,13 @@ from config import settings
 from db import get_connection_string
 from logging_setup import logger
 from metrics import METRICS
-from sql_guardrail import UnsafeSQLError, validate_sql
+from sql_guardrail import UnsafeSQLError, enforce_row_cap, validate_sql
 from web_tools import WEB_TOOLS
 
 _log = logger.bind(component="agent")
 
-# Keep the last 3 Q/A pairs per session (6 entries).
-_HISTORY_MAX = 6
+# One "turn" = one user message + one assistant message = 2 entries.
+_HISTORY_MAX = settings.session_history_turns * 2
 _history: dict[str, deque[str]] = defaultdict(lambda: deque(maxlen=_HISTORY_MAX))
 
 
@@ -51,8 +51,9 @@ class SafeSQLDatabase(SQLDatabase):
         except UnsafeSQLError as exc:
             _log.bind(sql=command[:200]).warning("guardrail blocked query: {}", exc)
             return f"ERROR: query blocked by guardrail ({exc})."
-        _log.bind(sql=command[:200]).debug("executing sql")
-        return super().run(command, *args, **kwargs)
+        capped = enforce_row_cap(command, settings.sql_max_rows)
+        _log.bind(sql=capped[:200]).debug("executing sql")
+        return super().run(capped, *args, **kwargs)
 
     def run_no_throw(self, command, *args, **kwargs):  # type: ignore[override]
         try:
@@ -60,7 +61,8 @@ class SafeSQLDatabase(SQLDatabase):
         except UnsafeSQLError as exc:
             _log.bind(sql=command[:200]).warning("guardrail blocked query: {}", exc)
             return f"ERROR: query blocked by guardrail ({exc})."
-        return super().run_no_throw(command, *args, **kwargs)
+        capped = enforce_row_cap(command, settings.sql_max_rows)
+        return super().run_no_throw(capped, *args, **kwargs)
 
 
 SYSTEM_PROMPT = """You are a data analyst for a Brazilian e-commerce
@@ -126,7 +128,7 @@ def get_agent():
             prefix=SYSTEM_PROMPT,
             extra_tools=WEB_TOOLS,
             handle_parsing_errors=True,
-            max_iterations=20,
+            max_iterations=settings.agent_max_iterations,
             return_intermediate_steps=True,
         )
     return _agent

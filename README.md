@@ -198,8 +198,20 @@ Groq are reachable from the runner.
 
 - The free Groq tier has a daily token cap; heavy use falls back to a
   friendly error message from FastAPI.
-- Wikipedia scraping is structure-dependent; if the target page layout
-  changes, the scraper may need updating.
+- Wikipedia scraping is structure-dependent; the scraper falls back to
+  a hardcoded IBGE state table if the page layout changes or the
+  network is unreachable, so state-name and capital lookups keep
+  working — but new states/territories would need a code update.
+- Frankfurter (BRL/USD rate) is cached for one hour and falls back to
+  the last-known-good rate if the API is down, so currency answers are
+  resilient to transient outages but may go stale during long ones.
+- In-process state: per-session memory and the LRU response cache live
+  in one Python process. Multi-worker deployments fragment this state
+  and a restart loses it — a Redis-backed store would be the next
+  step. Memory window is also bounded (default 6 turns, configurable
+  via `SESSION_HISTORY_TURNS`).
+- Static dataset: the Olist data is a 2016–2018 snapshot. Questions
+  like "this month's revenue" can't be answered against live data.
 - Runs locally only. For production, Postgres, FastAPI, and Streamlit
   would each need their own host (e.g. Supabase + Render + Streamlit
   Cloud).

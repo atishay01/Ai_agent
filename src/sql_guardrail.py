@@ -15,9 +15,15 @@ Rules enforced by ``validate_sql``:
 
 Violations raise ``UnsafeSQLError``. The agent's SQL-execution path
 wraps every ``run()`` call in this check (see ``SafeSQLDatabase``).
+
+In addition, ``enforce_row_cap`` appends ``LIMIT <n>`` to any SELECT
+that has no LIMIT, so a buggy or coerced agent query can't dump whole
+tables (defense-in-depth against data exfiltration).
 """
 
 from __future__ import annotations
+
+import re
 
 import sqlparse
 from sqlparse.sql import Statement
@@ -106,3 +112,24 @@ def validate_sql(query: str) -> None:
     banned = _contains_banned_keyword(stmt)
     if banned:
         raise UnsafeSQLError(f"banned keyword in query: {banned}")
+
+
+_LIMIT_RE = re.compile(r"\blimit\s+\d+", re.IGNORECASE)
+
+
+def enforce_row_cap(query: str, cap: int) -> str:
+    """Append ``LIMIT <cap>`` to a SELECT that has no LIMIT clause.
+
+    Conservative: if any LIMIT (in a subquery, CTE, or the outer query)
+    exists, we leave the query alone — the agent or query author already
+    bounded the result. Aggregate queries (``COUNT``, ``SUM``, ...) are
+    unaffected since they return one row regardless.
+    """
+    if cap <= 0:
+        return query
+    cleaned = query.strip().rstrip(";").strip()
+    if not cleaned:
+        return query
+    if _LIMIT_RE.search(cleaned):
+        return query
+    return f"{cleaned} LIMIT {cap}"

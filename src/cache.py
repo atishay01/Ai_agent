@@ -1,16 +1,18 @@
 """In-memory LRU cache for agent responses.
 
 Keyed by a normalized form of the question (whitespace collapsed,
-lower-cased). Small, thread-safe, in-process only — good enough to
-silence the free-tier Groq limit when the user re-asks the same
-question, without requiring Redis.
+lower-cased, trailing punctuation stripped). Small, thread-safe,
+in-process only — good enough to silence the free-tier Groq limit
+when the user re-asks the same question, without requiring Redis.
 """
 
 from __future__ import annotations
 
+import string
 from collections import OrderedDict
 from threading import Lock
 
+from config import settings
 from metrics import METRICS
 
 
@@ -22,9 +24,14 @@ class ResponseCache:
         self._max = max_size
         self._lock = Lock()
 
-    @staticmethod
-    def _key(question: str) -> str:
-        return " ".join(question.strip().lower().split())
+    _PUNCT_TABLE = str.maketrans("", "", string.punctuation)
+
+    @classmethod
+    def _key(cls, question: str) -> str:
+        # Lowercase, strip punctuation, collapse whitespace. So
+        # "How many orders?" and "how, many orders" hit the same slot.
+        cleaned = question.lower().translate(cls._PUNCT_TABLE)
+        return " ".join(cleaned.split())
 
     def get(self, question: str) -> dict | None:
         k = self._key(question)
@@ -53,4 +60,4 @@ class ResponseCache:
             return len(self._store)
 
 
-CACHE = ResponseCache(max_size=128)
+CACHE = ResponseCache(max_size=settings.cache_max_size)

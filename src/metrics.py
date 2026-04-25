@@ -4,9 +4,8 @@ Thread-safe counters for token usage, query counts and cache hits.
 Exposed as JSON via the FastAPI ``/metrics`` endpoint so that anyone
 eyeballing the backend can see how many tokens the agent has burned.
 
-Cost constants are placeholders — Groq's ``openai/gpt-oss-20b`` has no
-public per-token price at time of writing. Edit the two constants below
-if you switch to a priced model (e.g. an OpenAI or Anthropic endpoint).
+Per-token rates come from ``settings`` so they can be overridden via
+env vars when switching to a priced LLM endpoint.
 """
 
 from __future__ import annotations
@@ -14,8 +13,7 @@ from __future__ import annotations
 import threading
 from dataclasses import dataclass, field
 
-PROMPT_COST_PER_1M_USD = 0.05
-COMPLETION_COST_PER_1M_USD = 0.10
+from config import settings
 
 
 @dataclass
@@ -52,8 +50,10 @@ class Metrics:
 
     def snapshot(self) -> dict:
         with self._lock:
-            prompt_cost = self.prompt_tokens_total / 1_000_000 * PROMPT_COST_PER_1M_USD
-            completion_cost = self.completion_tokens_total / 1_000_000 * COMPLETION_COST_PER_1M_USD
+            prompt_cost = self.prompt_tokens_total / 1_000_000 * settings.prompt_cost_per_1m_usd
+            completion_cost = (
+                self.completion_tokens_total / 1_000_000 * settings.completion_cost_per_1m_usd
+            )
             return {
                 "queries_total": self.queries_total,
                 "queries_failed": self.queries_failed,

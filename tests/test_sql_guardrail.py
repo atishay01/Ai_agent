@@ -2,7 +2,7 @@
 
 import pytest
 
-from sql_guardrail import UnsafeSQLError, validate_sql
+from sql_guardrail import UnsafeSQLError, enforce_row_cap, validate_sql
 
 
 # ---------------------------------------------------------------------
@@ -54,3 +54,38 @@ def test_dangerous_queries_blocked(query: str, expected_fragment: str) -> None:
 def test_subclass_is_value_error() -> None:
     """UnsafeSQLError is-a ValueError so existing handlers catch it."""
     assert issubclass(UnsafeSQLError, ValueError)
+
+
+# ---------------------------------------------------------------------
+# enforce_row_cap — defense-in-depth row limiter.
+# ---------------------------------------------------------------------
+def test_enforce_row_cap_appends_when_missing() -> None:
+    out = enforce_row_cap("SELECT * FROM customers", cap=1000)
+    assert out.endswith("LIMIT 1000")
+
+
+def test_enforce_row_cap_strips_trailing_semicolon_before_appending() -> None:
+    out = enforce_row_cap("SELECT * FROM customers;", cap=1000)
+    assert out.endswith("LIMIT 1000")
+    assert ";" not in out
+
+
+def test_enforce_row_cap_skips_when_limit_present() -> None:
+    q = "SELECT * FROM customers LIMIT 50"
+    assert enforce_row_cap(q, cap=1000) == q
+
+
+def test_enforce_row_cap_skips_when_limit_in_subquery() -> None:
+    """Conservative: any LIMIT (even inner) suppresses the auto-cap."""
+    q = "SELECT * FROM (SELECT id FROM orders LIMIT 5) sub"
+    assert enforce_row_cap(q, cap=1000) == q
+
+
+def test_enforce_row_cap_handles_empty_input() -> None:
+    assert enforce_row_cap("", cap=1000) == ""
+    assert enforce_row_cap("   ", cap=1000) == "   "
+
+
+def test_enforce_row_cap_disabled_when_cap_zero() -> None:
+    q = "SELECT * FROM customers"
+    assert enforce_row_cap(q, cap=0) == q

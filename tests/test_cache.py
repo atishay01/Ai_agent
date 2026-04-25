@@ -38,6 +38,17 @@ def test_normalization_matches_whitespace_and_case() -> None:
     assert c.get("   how   many orders?   ") == {"answer": "42"}
 
 
+def test_normalization_strips_punctuation() -> None:
+    """Punctuation differences shouldn't fragment the cache."""
+    from cache import ResponseCache
+
+    c = ResponseCache()
+    c.set("How many orders?", {"answer": "42"})
+    # Different punctuation, same words → should hit the same slot.
+    assert c.get("how many orders") == {"answer": "42"}
+    assert c.get("How, many orders!") == {"answer": "42"}
+
+
 def test_lru_eviction() -> None:
     from cache import ResponseCache
 

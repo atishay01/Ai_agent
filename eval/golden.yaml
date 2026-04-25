@@ -53,3 +53,28 @@
   question: Which Brazilian state has the most orders? Answer with the two-letter state code.
   contains: ["SP"]
   max_latency_ms: 30000
+
+- id: order_items_count
+  question: How many order items are in the database?
+  contains: ["112,650"]
+  max_latency_ms: 15000
+
+- id: state_mg_capital
+  question: What is the capital of Brazilian state MG?
+  contains: ["Belo Horizonte"]
+  max_latency_ms: 15000
+
+- id: state_df_fullname
+  question: What is the full name of Brazilian state DF?
+  contains: ["Distrito Federal"]
+  max_latency_ms: 15000
+
+- id: calculate_arithmetic
+  question: What is 5921678.12 multiplied by 0.2009? Use the calculate tool.
+  contains: ["1,189,665"]
+  max_latency_ms: 15000
+
+- id: review_score_max
+  question: What is the highest review score value present in order_reviews?
+  contains: ["5"]
+  max_latency_ms: 15000

@@ -31,12 +31,13 @@ def test_record_query_failed_flag() -> None:
 
 
 def test_cost_math() -> None:
-    from metrics import COMPLETION_COST_PER_1M_USD, PROMPT_COST_PER_1M_USD, Metrics
+    from config import settings
+    from metrics import Metrics
 
     m = Metrics()
     m.record_query(1_000_000, 1_000_000)
     snap = m.snapshot()
-    expected = round(PROMPT_COST_PER_1M_USD + COMPLETION_COST_PER_1M_USD, 6)
+    expected = round(settings.prompt_cost_per_1m_usd + settings.completion_cost_per_1m_usd, 6)
     assert snap["estimated_cost_usd"] == expected
 
 
