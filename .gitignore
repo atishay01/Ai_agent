@@ -14,9 +14,15 @@ logs/
 .ruff_cache/
 .mypy_cache/
 .pytest_cache/
+.coverage
 
 # Data (too large for git)
 data/raw/*.csv
+
+# Persistent state (SQLite store: session memory + response cache)
+data/state.db
+data/state.db-shm
+data/state.db-wal
 
 # Local helpers (not shared)
 run.bat

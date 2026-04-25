@@ -53,7 +53,7 @@ answers; the dashboard is for analysts who want shape-at-a-glance.
 | Backend       | FastAPI + slowapi rate-limiting              |
 | Frontend      | Streamlit (Chat + Dashboard tabs)            |
 | Web data      | Requests, BeautifulSoup                      |
-| Tests         | pytest (90+ tests, mocked externals)         |
+| Tests         | pytest (~130 tests, mocked externals)        |
 | Lint / format | ruff + black, enforced in CI                 |
 | Packaging     | Multi-stage Dockerfile + docker-compose      |
 
@@ -75,21 +75,16 @@ Foreign keys and indexes on all join columns. Full DDL in
 | **LRU response cache**   | `src/cache.py` — SQLite-backed, normalized-question key, survives restarts. |
 | **SQL self-repair**      | `src/sql_guardrail.py` formats DBAPI errors as `SQL_ERROR: ... Hint: ...` so the agent retries with a corrected query. |
 | **Per-user rate limits** | `src/api.py` keys slowapi by `X-API-Key` header (falling back to IP), so users behind a shared NAT have isolated budgets. |
+| **SQL guardrail**        | `src/sql_guardrail.py` blocks DDL/DML, stacked statements, and row-fan-out aggregations (`array_agg`, `json_agg`, …); wraps every SELECT in a subquery before applying `LIMIT`, so trailing comments and inner LIMITs can't bypass the row cap. |
 | **Token + cost tracking**| `src/callbacks.py` reads the three token-usage shapes ChatGroq emits. |
-| **Prometheus-ish metrics** | `GET /metrics` → queries, failures, tokens, cache hits, $ estimate. |
+| **JSON `/metrics`**      | `GET /metrics` → queries, failures, tokens, cache hits / size, session count, guardrail blocks, SQL errors, p50/p95/p99 latency, and $ estimate. |
 | **Session reset API**    | `DELETE /session/{session_id}` drops server-side history. |
 | **Rate limiting**        | slowapi on `/query`, 30 req/min default (configurable).   |
-| **Structured logging**   | Loguru, JSON-friendly format, `logs/app.log` ships outside the image. |
+| **Structured logging**   | Loguru JSON to `logs/app.log`, with end-to-end `trace_id` correlation across api → agent → outbound LLM calls. Question text and `session_id` are sha256-hashed (12-char prefix) before binding — the literal value never lands on disk. |
 | **Health check**         | `/health` endpoint used by the Docker `HEALTHCHECK`.      |
 | **Trace panel**          | Streamlit renders `intermediate_steps` with SQL syntax highlighting. |
-| **Golden eval suite**    | `eval/run_eval.py` runs 9 cases end-to-end, prints pass/fail + latency + $. |
+| **Golden eval suite**    | `eval/run_eval.py` runs 14 cases end-to-end, prints pass/fail + latency + $. |
 | **CI**                   | GitHub Actions: ruff + black + pytest on every push.      |
-
-Latest end-to-end eval run (dockerized stack):
-
-```
-Passed: 9/9 (100.0%)    Avg latency: 4321 ms    Total tokens: 35,473 (~$0.0027)
-```
 
 ## Quick start — Docker (recommended)
 
@@ -151,9 +146,12 @@ for the API. Tear down with `docker compose down -v`.
   so currency conversions are exact.
 
 - **Web data**: the agent can fetch the live BRL/USD rate from
-  Frankfurter and scrape the "States of Brazil" Wikipedia page for
-  full state names and capitals — demonstrating that answers can
-  come from outside the database when needed.
+  Frankfurter (TTL-cached, single-flight, last-known-good fallback)
+  and look up Brazilian state full names and capitals. State lookups
+  answer from a bundled IBGE table first (canonical, O(1)); Wikipedia
+  is only consulted for codes outside that table — i.e. essentially
+  never — which removes per-call HTTP latency and scraping fragility
+  for the common path.
 
 - **Cache key normalization**: the LRU cache keys questions by their
   lower-cased, whitespace-collapsed form so "How many orders?" and
@@ -169,7 +167,7 @@ for the API. Tear down with `docker compose down -v`.
 ## Testing
 
 ```
-pytest -q                        # full suite (~90 tests, fully mocked)
+pytest -q                        # full suite (~130 tests, fully mocked)
 pytest tests/test_agent.py -v    # one module
 ```
 
@@ -236,9 +234,9 @@ Groq are reachable from the runner.
 │   ├── api.py             # FastAPI backend (/query, /metrics, /session, /health)
 │   ├── app.py             # Streamlit UI — Chat + Dashboard tabs
 │   └── dashboard.py       # Dashboard queries + rendering (direct Postgres)
-├── tests/                 # 90+ pytest cases; external services mocked
+├── tests/                 # ~130 pytest cases; external services mocked
 ├── eval/
-│   ├── golden.yaml        # 9-case golden set
+│   ├── golden.yaml        # 14-case golden set
 │   └── run_eval.py        # CLI harness, prints report + exits non-zero on fail
 ├── .github/workflows/ci.yml   # ruff + black + pytest on every push
 ├── Dockerfile             # Multi-stage (builder + slim runtime, non-root user)
