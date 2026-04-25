@@ -3,23 +3,23 @@ LangChain SQL agent: converts natural-language questions into SQL
 against the Olist Postgres DB, with extra tools for currency conversion,
 state lookup and exact arithmetic.
 
-Phase 3 extensions:
+Features:
   * Per-query token accounting via ``TokenUsageCallback`` → ``METRICS``.
-  * In-process LRU cache for identical questions (stateless calls only).
+  * SQLite-backed LRU cache for identical questions (survives restarts;
+    see ``cache.py`` and ``state_store.py``).
   * Optional ``session_id`` for multi-turn follow-ups — prior turns are
-    prepended to the prompt so the agent can resolve pronouns like
-    "and for São Paulo?".
+    persisted via ``session_history`` and prepended to the prompt so
+    the agent can resolve pronouns like "and for São Paulo?".
   * Returns serialised intermediate steps so the UI can render a trace.
 """
 
 from __future__ import annotations
 
-from collections import defaultdict, deque
-
 from langchain_community.agent_toolkits.sql.base import create_sql_agent
 from langchain_community.utilities import SQLDatabase
 from langchain_groq import ChatGroq
 
+import session_history
 from cache import CACHE
 from callbacks import TokenUsageCallback
 from config import settings
@@ -30,10 +30,6 @@ from sql_guardrail import UnsafeSQLError, enforce_row_cap, validate_sql
 from web_tools import WEB_TOOLS
 
 _log = logger.bind(component="agent")
-
-# One "turn" = one user message + one assistant message = 2 entries.
-_HISTORY_MAX = settings.session_history_turns * 2
-_history: dict[str, deque[str]] = defaultdict(lambda: deque(maxlen=_HISTORY_MAX))
 
 
 class SafeSQLDatabase(SQLDatabase):
@@ -158,7 +154,7 @@ def _build_input(question: str, session_id: str | None) -> str:
     """Prepend prior-turn context when a session is active."""
     if not session_id:
         return question
-    history = _history.get(session_id)
+    history = session_history.get(session_id)
     if not history:
         return question
     prior = "\n".join(history)
@@ -167,7 +163,7 @@ def _build_input(question: str, session_id: str | None) -> str:
 
 def clear_session(session_id: str) -> None:
     """Forget all prior turns for a session."""
-    _history.pop(session_id, None)
+    session_history.clear(session_id)
 
 
 def ask(question: str, session_id: str | None = None) -> dict:
@@ -183,8 +179,8 @@ def ask(question: str, session_id: str | None = None) -> dict:
         result = dict(cached)
         result["cached"] = True
         if session_id:
-            _history[session_id].append(f"User: {question}")
-            _history[session_id].append(f"Assistant: {result['answer']}")
+            session_history.append(session_id, f"User: {question}")
+            session_history.append(session_id, f"Assistant: {result['answer']}")
         _log.bind(question=question, session_id=session_id).info("cache hit")
         return result
 
@@ -206,8 +202,8 @@ def ask(question: str, session_id: str | None = None) -> dict:
     METRICS.record_query(cb.prompt_tokens, cb.completion_tokens, failed=False)
 
     if session_id:
-        _history[session_id].append(f"User: {question}")
-        _history[session_id].append(f"Assistant: {answer}")
+        session_history.append(session_id, f"User: {question}")
+        session_history.append(session_id, f"Assistant: {answer}")
 
     response = {
         "question": question,

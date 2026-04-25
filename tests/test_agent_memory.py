@@ -15,17 +15,13 @@ class _FakeAction:
 
 @pytest.fixture(autouse=True)
 def _reset_state():
-    import agent
-    from cache import CACHE
+    """Per-test reset — the SQLite store is wiped by the conftest fixture,
+    so we just need to drop METRICS counters here."""
     from metrics import METRICS
 
-    CACHE.clear()
     METRICS.reset()
-    agent._history.clear()
     yield
-    CACHE.clear()
     METRICS.reset()
-    agent._history.clear()
 
 
 def _fake_agent(answer: str = "answer", steps=None) -> MagicMock:

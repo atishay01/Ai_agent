@@ -11,6 +11,8 @@ import os
 import sys
 from pathlib import Path
 
+import pytest
+
 # Make `src/` importable without relying on editable installs.
 SRC = Path(__file__).resolve().parent.parent / "src"
 if str(SRC) not in sys.path:
@@ -22,3 +24,16 @@ os.environ.setdefault("RATE_LIMIT", "1000/minute")
 os.environ.setdefault("GROQ_API_KEY", "test-key-unused")
 os.environ.setdefault("PG_PASSWORD", "dummy")
 os.environ.setdefault("LOG_LEVEL", "WARNING")
+# Keep the SQLite state store off-disk for tests so cases don't pollute
+# each other's sessions or cache rows.
+os.environ.setdefault("STATE_DB_PATH", ":memory:")
+
+
+@pytest.fixture(autouse=True)
+def _isolate_persistent_state():
+    """Wipe the SQLite store between tests — no cross-test bleed."""
+    from state_store import reset_for_tests
+
+    reset_for_tests()
+    yield
+    reset_for_tests()

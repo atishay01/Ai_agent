@@ -69,6 +69,13 @@ class Settings(BaseSettings):
     # buggy or coerced agent query can't dump whole tables.
     sql_max_rows: int = Field(default=1000)
 
+    # --- State store (sessions + response cache) -------------------
+    # Path to the SQLite file backing per-session memory and the LRU
+    # response cache. Default is a file under the project's data/
+    # directory so state survives restarts. Set to ":memory:" to keep
+    # state in-process only (used by the test suite).
+    state_db_path: str = Field(default="data/state.db")
+
     # --- Web tools --------------------------------------------------
     # How long to cache the BRL/USD exchange rate (seconds). Frankfurter
     # only updates daily, so anything <24h is fine.
