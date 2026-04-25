@@ -29,10 +29,28 @@ from metrics import METRICS
 configure_logging()
 log = logger.bind(component="api")
 
+
 # ---------------------------------------------------------------------
-# Rate limiter — one instance shared across the app; per-client-IP.
+# Rate limiter — keyed by X-API-Key when present (per-user), otherwise
+# by client IP. Behind a load balancer or NAT, IP-only keying lets all
+# clients sharing an egress IP exhaust the shared budget; per-key
+# limiting isolates each authenticated caller.
 # ---------------------------------------------------------------------
-limiter = Limiter(key_func=get_remote_address, default_limits=[])
+def rate_limit_key(request: Request) -> str:
+    """Prefer the API key as the rate-limit identity; fall back to remote IP.
+
+    The key is namespaced (``apikey:`` / ``ip:``) so a client with a
+    real key can never collide with the literal IP string of another
+    client. Keys are not echoed into logs by slowapi — they only flow
+    into the in-memory bucket map.
+    """
+    api_key = request.headers.get("x-api-key")
+    if api_key:
+        return f"apikey:{api_key}"
+    return f"ip:{get_remote_address(request)}"
+
+
+limiter = Limiter(key_func=rate_limit_key, default_limits=[])
 
 # ---------------------------------------------------------------------
 app = FastAPI(

@@ -71,8 +71,10 @@ Foreign keys and indexes on all join columns. Full DDL in
 
 | Feature                  | Where it lives                                            |
 |--------------------------|-----------------------------------------------------------|
-| **Per-session memory**   | `src/agent.py` keeps the last 6 turns per `session_id`.   |
-| **LRU response cache**   | `src/cache.py` — 128-entry bounded, normalized-question key. |
+| **Per-session memory**   | `src/session_history.py` — SQLite-backed, configurable turn count, survives restarts. |
+| **LRU response cache**   | `src/cache.py` — SQLite-backed, normalized-question key, survives restarts. |
+| **SQL self-repair**      | `src/sql_guardrail.py` formats DBAPI errors as `SQL_ERROR: ... Hint: ...` so the agent retries with a corrected query. |
+| **Per-user rate limits** | `src/api.py` keys slowapi by `X-API-Key` header (falling back to IP), so users behind a shared NAT have isolated budgets. |
 | **Token + cost tracking**| `src/callbacks.py` reads the three token-usage shapes ChatGroq emits. |
 | **Prometheus-ish metrics** | `GET /metrics` → queries, failures, tokens, cache hits, $ estimate. |
 | **Session reset API**    | `DELETE /session/{session_id}` drops server-side history. |
@@ -205,11 +207,11 @@ Groq are reachable from the runner.
 - Frankfurter (BRL/USD rate) is cached for one hour and falls back to
   the last-known-good rate if the API is down, so currency answers are
   resilient to transient outages but may go stale during long ones.
-- In-process state: per-session memory and the LRU response cache live
-  in one Python process. Multi-worker deployments fragment this state
-  and a restart loses it — a Redis-backed store would be the next
-  step. Memory window is also bounded (default 6 turns, configurable
-  via `SESSION_HISTORY_TURNS`).
+- Persistent state lives in SQLite (`STATE_DB_PATH`, default
+  `data/state.db`). One file = one process or one shared volume; for a
+  truly horizontally-scaled deployment with many workers behind a
+  load balancer, swap to Redis. Memory window is bounded (default 6
+  turns, configurable via `SESSION_HISTORY_TURNS`).
 - Static dataset: the Olist data is a 2016–2018 snapshot. Questions
   like "this month's revenue" can't be answered against live data.
 - Runs locally only. For production, Postgres, FastAPI, and Streamlit

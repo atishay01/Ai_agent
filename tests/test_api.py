@@ -167,3 +167,73 @@ def test_query_requires_api_key_when_configured(monkeypatch) -> None:
     config.get_settings.cache_clear()
     config.settings = config.get_settings()
     importlib.reload(api)
+
+
+# ---------------------------------------------------------------------
+# Rate-limit keying — per-user when X-API-Key is set, else per-IP.
+# ---------------------------------------------------------------------
+def test_rate_limit_key_uses_api_key_when_present() -> None:
+    """The slowapi key_func must namespace API keys distinctly from IPs."""
+    from unittest.mock import MagicMock
+
+    import api
+
+    req = MagicMock()
+    req.headers = {"x-api-key": "user-alice"}
+    req.client.host = "203.0.113.5"
+
+    key = api.rate_limit_key(req)
+    assert key == "apikey:user-alice"
+
+
+def test_rate_limit_key_falls_back_to_ip() -> None:
+    """No API key header → key is namespaced as ip:<addr>."""
+    from unittest.mock import MagicMock
+
+    import api
+
+    req = MagicMock()
+    req.headers = {}
+    # slowapi's get_remote_address reads request.client.host
+    req.client.host = "203.0.113.5"
+
+    key = api.rate_limit_key(req)
+    assert key.startswith("ip:")
+    assert "203.0.113.5" in key
+
+
+def test_rate_limit_keys_isolate_distinct_users(monkeypatch) -> None:
+    """Two distinct API keys must produce two distinct rate-limit identities,
+    even from the same IP — proving the per-user budget."""
+    import importlib
+
+    monkeypatch.setenv("RATE_LIMIT", "2/minute")
+    import config
+
+    config.get_settings.cache_clear()
+    config.settings = config.get_settings()
+    import api
+
+    importlib.reload(api)
+    c = TestClient(api.app)
+
+    fake = {"question": "x", "answer": "y"}
+    with patch("api.ask", return_value=fake):
+        # Alice burns her budget (2 hits, then 429).
+        for _ in range(2):
+            r = c.post(
+                "/query", json={"question": "How many orders?"}, headers={"X-API-Key": "alice"}
+            )
+            assert r.status_code == 200
+        r = c.post("/query", json={"question": "How many orders?"}, headers={"X-API-Key": "alice"})
+        assert r.status_code == 429
+
+        # Bob — same IP, different key — has his own fresh budget.
+        r = c.post("/query", json={"question": "How many orders?"}, headers={"X-API-Key": "bob"})
+        assert r.status_code == 200
+
+    # Restore for subsequent tests.
+    monkeypatch.setenv("RATE_LIMIT", "1000/minute")
+    config.get_settings.cache_clear()
+    config.settings = config.get_settings()
+    importlib.reload(api)
