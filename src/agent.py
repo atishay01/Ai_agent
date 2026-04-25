@@ -26,7 +26,7 @@ from config import settings
 from db import get_connection_string
 from logging_setup import logger
 from metrics import METRICS
-from sql_guardrail import UnsafeSQLError, enforce_row_cap, validate_sql
+from sql_guardrail import UnsafeSQLError, enforce_row_cap, format_sql_error, validate_sql
 from web_tools import WEB_TOOLS
 
 _log = logger.bind(component="agent")
@@ -35,10 +35,13 @@ _log = logger.bind(component="agent")
 class SafeSQLDatabase(SQLDatabase):
     """SQLDatabase that runs every query through the guardrail first.
 
-    Any attempt to execute non-SELECT SQL (INSERT/UPDATE/DROP/etc.)
-    is blocked before it reaches Postgres and is returned to the agent
-    as an error string — which the LLM then incorporates into its
-    reasoning instead of hitting the database.
+    Any attempt to execute non-SELECT SQL (INSERT/UPDATE/DROP/etc.) is
+    blocked before it reaches Postgres and is returned to the agent as
+    an error string. Postgres-side execution errors (unknown column,
+    syntax error, ...) are also caught and reformatted via
+    ``format_sql_error`` so the agent gets a consistent ``SQL_ERROR:``
+    prefix it can recognise and self-repair from, rather than a raw
+    DBAPI traceback.
     """
 
     def run(self, command, *args, **kwargs):  # type: ignore[override]
@@ -46,19 +49,27 @@ class SafeSQLDatabase(SQLDatabase):
             validate_sql(command)
         except UnsafeSQLError as exc:
             _log.bind(sql=command[:200]).warning("guardrail blocked query: {}", exc)
-            return f"ERROR: query blocked by guardrail ({exc})."
+            return f"SQL_ERROR: query blocked by guardrail ({exc})."
         capped = enforce_row_cap(command, settings.sql_max_rows)
         _log.bind(sql=capped[:200]).debug("executing sql")
-        return super().run(capped, *args, **kwargs)
+        try:
+            return super().run(capped, *args, **kwargs)
+        except Exception as exc:
+            _log.bind(sql=capped[:200]).warning("sql execution failed: {}", exc)
+            return format_sql_error(exc)
 
     def run_no_throw(self, command, *args, **kwargs):  # type: ignore[override]
         try:
             validate_sql(command)
         except UnsafeSQLError as exc:
             _log.bind(sql=command[:200]).warning("guardrail blocked query: {}", exc)
-            return f"ERROR: query blocked by guardrail ({exc})."
+            return f"SQL_ERROR: query blocked by guardrail ({exc})."
         capped = enforce_row_cap(command, settings.sql_max_rows)
-        return super().run_no_throw(capped, *args, **kwargs)
+        try:
+            return super().run_no_throw(capped, *args, **kwargs)
+        except Exception as exc:
+            _log.bind(sql=capped[:200]).warning("sql execution failed: {}", exc)
+            return format_sql_error(exc)
 
 
 SYSTEM_PROMPT = """You are a data analyst for a Brazilian e-commerce
@@ -81,6 +92,16 @@ Tool use rules:
     lookup_brazilian_state once per distinct state code, then combine.
   - Be decisive: run your queries, call your tools, then answer. Do
     not re-inspect the schema repeatedly.
+
+Error recovery:
+  - Any tool result that begins with ``SQL_ERROR:`` means the previous
+    query failed. Read the message and the hint that follows it, fix
+    the underlying issue (column typo, wrong table, missing GROUP BY,
+    ...) and retry with a corrected query. Do not give up after a
+    single failure — most errors are one-line fixes.
+  - If the same query fails twice with the same error, switch
+    strategies (rewrite the JOIN, double-check the schema) instead of
+    re-submitting.
 """
 
 

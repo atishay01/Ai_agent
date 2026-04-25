@@ -133,3 +133,61 @@ def enforce_row_cap(query: str, cap: int) -> str:
     if _LIMIT_RE.search(cleaned):
         return query
     return f"{cleaned} LIMIT {cap}"
+
+
+# ---------------------------------------------------------------------
+# SQL error formatting — converts raw DBAPI exceptions into a clean,
+# agent-readable string so the LLM can rewrite the query and retry.
+# ---------------------------------------------------------------------
+_MAX_ERR_LEN = 400
+
+_HINTS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (
+        re.compile(r"column .* does not exist", re.IGNORECASE),
+        "Check the schema for exact column names — the case must match "
+        "and joins must use the right side's column.",
+    ),
+    (
+        re.compile(r"relation .* does not exist", re.IGNORECASE),
+        "The table name is wrong. Available tables: customers, sellers, "
+        "products, geolocation, orders, order_items, order_payments, "
+        "order_reviews.",
+    ),
+    (
+        re.compile(r"syntax error", re.IGNORECASE),
+        "Recheck SQL syntax — common causes: missing comma, unbalanced "
+        "parentheses, unquoted string literal, or reserved word as alias.",
+    ),
+    (
+        re.compile(r"function .* does not exist", re.IGNORECASE),
+        "Postgres function name or argument types are wrong — verify the "
+        "function exists and check argument casts.",
+    ),
+    (
+        re.compile(r"division by zero", re.IGNORECASE),
+        "Guard the divisor with NULLIF(divisor, 0) to avoid division by zero.",
+    ),
+    (
+        re.compile(r"group by", re.IGNORECASE),
+        "Every non-aggregated SELECT column must appear in GROUP BY.",
+    ),
+)
+
+
+def format_sql_error(exc: BaseException) -> str:
+    """Render an exception from SQL execution as a single agent-readable line.
+
+    Output always starts with ``SQL_ERROR:`` so the LLM can recognise the
+    pattern. A short hint is appended when the message matches a known
+    failure mode (unknown column, syntax error, etc.) — this nudges the
+    agent toward a correct rewrite without over-prescribing.
+    """
+    raw = str(exc).strip().replace("\n", " ")
+    if len(raw) > _MAX_ERR_LEN:
+        raw = raw[:_MAX_ERR_LEN] + "…"
+    hint = ""
+    for pattern, advice in _HINTS:
+        if pattern.search(raw):
+            hint = f" Hint: {advice}"
+            break
+    return f"SQL_ERROR: {raw}{hint} Please rewrite the query and try again."

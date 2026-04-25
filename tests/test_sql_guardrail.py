@@ -2,7 +2,7 @@
 
 import pytest
 
-from sql_guardrail import UnsafeSQLError, enforce_row_cap, validate_sql
+from sql_guardrail import UnsafeSQLError, enforce_row_cap, format_sql_error, validate_sql
 
 
 # ---------------------------------------------------------------------
@@ -89,3 +89,51 @@ def test_enforce_row_cap_handles_empty_input() -> None:
 def test_enforce_row_cap_disabled_when_cap_zero() -> None:
     q = "SELECT * FROM customers"
     assert enforce_row_cap(q, cap=0) == q
+
+
+# ---------------------------------------------------------------------
+# format_sql_error — agent self-repair signal.
+# ---------------------------------------------------------------------
+def test_format_sql_error_uses_consistent_prefix() -> None:
+    out = format_sql_error(RuntimeError("boom"))
+    assert out.startswith("SQL_ERROR:")
+    assert "rewrite the query" in out
+
+
+def test_format_sql_error_unknown_column_hint() -> None:
+    exc = RuntimeError('column "ordrs.id" does not exist')
+    out = format_sql_error(exc)
+    assert "SQL_ERROR" in out
+    assert "Hint" in out
+    assert "column" in out.lower()
+
+
+def test_format_sql_error_unknown_table_lists_options() -> None:
+    exc = RuntimeError('relation "ordres" does not exist')
+    out = format_sql_error(exc)
+    assert "Hint" in out
+    # Hint mentions actual table names so the agent can correct.
+    assert "order_items" in out
+    assert "customers" in out
+
+
+def test_format_sql_error_syntax_error_hint() -> None:
+    exc = RuntimeError('syntax error at or near "FORM"')
+    out = format_sql_error(exc)
+    assert "Hint" in out
+    assert "syntax" in out.lower()
+
+
+def test_format_sql_error_unknown_pattern_no_hint() -> None:
+    """Errors that don't match any pattern still produce a valid SQL_ERROR line."""
+    out = format_sql_error(RuntimeError("some unknown DBAPI failure"))
+    assert out.startswith("SQL_ERROR:")
+    assert "Hint" not in out
+
+
+def test_format_sql_error_truncates_long_messages() -> None:
+    long_msg = "x" * 10_000
+    out = format_sql_error(RuntimeError(long_msg))
+    # Cap is 400 + the prefix/suffix, so total stays bounded.
+    assert len(out) < 700
+    assert "…" in out
