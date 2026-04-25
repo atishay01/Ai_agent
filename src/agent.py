@@ -24,7 +24,7 @@ from cache import CACHE
 from callbacks import TokenUsageCallback
 from config import settings
 from db import get_connection_string
-from logging_setup import logger
+from logging_setup import logger, redact
 from metrics import METRICS
 from sql_guardrail import UnsafeSQLError, enforce_row_cap, format_sql_error, validate_sql
 from web_tools import WEB_TOOLS
@@ -48,6 +48,7 @@ class SafeSQLDatabase(SQLDatabase):
         try:
             validate_sql(command)
         except UnsafeSQLError as exc:
+            METRICS.record_guardrail_block()
             _log.bind(sql=command[:200]).warning("guardrail blocked query: {}", exc)
             return f"SQL_ERROR: query blocked by guardrail ({exc})."
         capped = enforce_row_cap(command, settings.sql_max_rows)
@@ -55,6 +56,7 @@ class SafeSQLDatabase(SQLDatabase):
         try:
             return super().run(capped, *args, **kwargs)
         except Exception as exc:
+            METRICS.record_sql_error()
             _log.bind(sql=capped[:200]).warning("sql execution failed: {}", exc)
             return format_sql_error(exc)
 
@@ -62,12 +64,14 @@ class SafeSQLDatabase(SQLDatabase):
         try:
             validate_sql(command)
         except UnsafeSQLError as exc:
+            METRICS.record_guardrail_block()
             _log.bind(sql=command[:200]).warning("guardrail blocked query: {}", exc)
             return f"SQL_ERROR: query blocked by guardrail ({exc})."
         capped = enforce_row_cap(command, settings.sql_max_rows)
         try:
             return super().run_no_throw(capped, *args, **kwargs)
         except Exception as exc:
+            METRICS.record_sql_error()
             _log.bind(sql=capped[:200]).warning("sql execution failed: {}", exc)
             return format_sql_error(exc)
 
@@ -187,56 +191,62 @@ def clear_session(session_id: str) -> None:
     session_history.clear(session_id)
 
 
-def ask(question: str, session_id: str | None = None) -> dict:
+def ask(question: str, session_id: str | None = None, trace_id: str | None = None) -> dict:
     """Run a single question through the agent.
 
     The response cache is checked first regardless of ``session_id`` —
     identical literal questions short-circuit the LLM call. When a
     session is active, the cached answer is still threaded into the
     session history so follow-ups stay coherent.
+
+    ``trace_id`` is contextualised into loguru so every downstream log
+    line (guardrail blocks, SQL execution, DBAPI errors in
+    ``SafeSQLDatabase``) carries the same identifier as the inbound
+    request, enabling single-grep correlation.
     """
-    cached = CACHE.get(question)
-    if cached is not None:
-        result = dict(cached)
-        result["cached"] = True
+    with logger.contextualize(trace_id=trace_id or "-"):
+        cached = CACHE.get(question)
+        if cached is not None:
+            result = dict(cached)
+            result["cached"] = True
+            if session_id:
+                session_history.append(session_id, f"User: {question}")
+                session_history.append(session_id, f"Assistant: {result['answer']}")
+            _log.bind(q_hash=redact(question), session_hash=redact(session_id)).info("cache hit")
+            return result
+
+        cb = TokenUsageCallback()
+        prompt_input = _build_input(question, session_id)
+
+        try:
+            invoke_result = get_agent().invoke(
+                {"input": prompt_input},
+                config={"callbacks": [cb]},
+            )
+        except Exception:
+            METRICS.record_query(cb.prompt_tokens, cb.completion_tokens, failed=True)
+            raise
+
+        answer = invoke_result.get("output", "No answer.")
+        steps = _serialize_steps(invoke_result.get("intermediate_steps"))
+
+        METRICS.record_query(cb.prompt_tokens, cb.completion_tokens, failed=False)
+
         if session_id:
             session_history.append(session_id, f"User: {question}")
-            session_history.append(session_id, f"Assistant: {result['answer']}")
-        _log.bind(question=question, session_id=session_id).info("cache hit")
-        return result
+            session_history.append(session_id, f"Assistant: {answer}")
 
-    cb = TokenUsageCallback()
-    prompt_input = _build_input(question, session_id)
+        response = {
+            "question": question,
+            "answer": answer,
+            "prompt_tokens": cb.prompt_tokens,
+            "completion_tokens": cb.completion_tokens,
+            "steps": steps,
+            "cached": False,
+        }
 
-    try:
-        invoke_result = get_agent().invoke(
-            {"input": prompt_input},
-            config={"callbacks": [cb]},
-        )
-    except Exception:
-        METRICS.record_query(cb.prompt_tokens, cb.completion_tokens, failed=True)
-        raise
-
-    answer = invoke_result.get("output", "No answer.")
-    steps = _serialize_steps(invoke_result.get("intermediate_steps"))
-
-    METRICS.record_query(cb.prompt_tokens, cb.completion_tokens, failed=False)
-
-    if session_id:
-        session_history.append(session_id, f"User: {question}")
-        session_history.append(session_id, f"Assistant: {answer}")
-
-    response = {
-        "question": question,
-        "answer": answer,
-        "prompt_tokens": cb.prompt_tokens,
-        "completion_tokens": cb.completion_tokens,
-        "steps": steps,
-        "cached": False,
-    }
-
-    CACHE.set(question, response)
-    return response
+        CACHE.set(question, response)
+        return response
 
 
 if __name__ == "__main__":

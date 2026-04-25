@@ -114,6 +114,14 @@ def test_lookup_state_falls_back_to_table_when_wikipedia_fails() -> None:
     assert "Minas Gerais" in out
 
 
+def test_lookup_state_known_code_does_not_hit_network() -> None:
+    """Local IBGE table is canonical; Wikipedia must not be called for known codes."""
+    with patch("web_tools.requests.get") as mock_get:
+        out = lookup_brazilian_state.invoke({"state_code": "SP"})
+    assert "São Paulo" in out
+    assert mock_get.call_count == 0
+
+
 def test_lookup_state_falls_back_when_scrape_misses() -> None:
     """Successful HTTP but the page layout changed → table fallback covers known codes."""
     with patch("web_tools.requests.get") as mock_get:

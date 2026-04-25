@@ -16,6 +16,7 @@ Import once at process start:
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import sys
 
@@ -24,6 +25,20 @@ from loguru import logger
 from config import PROJECT_ROOT, settings
 
 LOG_DIR = PROJECT_ROOT / "logs"
+
+
+def redact(value: str | None) -> str:
+    """Hash a sensitive value to a 12-char hex digest for log binding.
+
+    User questions and session ids are not safe to write to disk in
+    plaintext (PII risk, GDPR posture). Hashing preserves the ability
+    to grep-correlate records that share a value across requests
+    without persisting the value itself. ``None``/empty maps to ``"-"``
+    so log lines stay parseable.
+    """
+    if not value:
+        return "-"
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()[:12]
 
 
 class _InterceptHandler(logging.Handler):
@@ -69,7 +84,11 @@ def configure_logging() -> None:
         diagnose=False,
     )
 
-    # File (JSON, one record per line; rotate at 10 MB; keep 7 files)
+    # File (JSON, one record per line; rotate at 10 MB; keep 7 files).
+    # diagnose=False is critical: with the default True, loguru would
+    # render local-variable values inline in tracebacks — including the
+    # unredacted QueryRequest object (question text + session id) — and
+    # bypass the redact() helper entirely.
     logger.add(
         LOG_DIR / "app.log",
         level=settings.log_level,
@@ -77,6 +96,8 @@ def configure_logging() -> None:
         retention=7,
         serialize=True,
         enqueue=True,  # thread/process-safe
+        backtrace=False,
+        diagnose=False,
     )
 
     # Redirect stdlib logging -> loguru
@@ -99,4 +120,4 @@ def configure_logging() -> None:
     logger.debug("logging configured (level={})", settings.log_level)
 
 
-__all__ = ["configure_logging", "logger", "LOG_DIR"]
+__all__ = ["configure_logging", "logger", "LOG_DIR", "redact"]

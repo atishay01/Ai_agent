@@ -13,6 +13,7 @@ Both web tools degrade gracefully:
 
 import ast
 import operator as op
+import threading
 import time
 
 import requests
@@ -32,6 +33,9 @@ _log = logger.bind(component="web_tools")
 # API is unreachable — picked as a recent plausible BRL->USD value.
 _RATE_FALLBACK = (0.20, "fallback", 0.0)
 _rate_state: tuple[float, str, float] = _RATE_FALLBACK
+# Single-flight lock: prevents two concurrent misses from both hitting
+# Frankfurter when the cache expires.
+_rate_lock = threading.Lock()
 
 
 def _format_rate(rate: float, date: str) -> str:
@@ -51,23 +55,31 @@ def get_usd_brl_rate() -> str:
     if fetched_at and (now - fetched_at) < settings.exchange_rate_ttl_seconds:
         return _format_rate(rate, date)
 
-    try:
-        r = requests.get(
-            "https://api.frankfurter.app/latest",
-            params={"from": "BRL", "to": "USD"},
-            timeout=5,
-        )
-        r.raise_for_status()
-        data = r.json()
-        rate = float(data["rates"]["USD"])
-        date = str(data.get("date", "unknown"))
-        _rate_state = (rate, date, now)
-        return _format_rate(rate, date)
-    except Exception as exc:
-        _log.warning("Frankfurter unavailable, using last-known rate: {}", exc)
-        # Note in the response that this is a fallback so the agent can
-        # mention it in the answer if appropriate.
-        return _format_rate(rate, date) + " (cached fallback — live API unavailable)"
+    # Single-flight: only one thread fetches; others wait and re-check
+    # the freshly-populated cache. Avoids a thundering herd on TTL expiry.
+    with _rate_lock:
+        rate, date, fetched_at = _rate_state
+        now = time.monotonic()
+        if fetched_at and (now - fetched_at) < settings.exchange_rate_ttl_seconds:
+            return _format_rate(rate, date)
+
+        try:
+            r = requests.get(
+                "https://api.frankfurter.app/latest",
+                params={"from": "BRL", "to": "USD"},
+                timeout=5,
+            )
+            r.raise_for_status()
+            data = r.json()
+            rate = float(data["rates"]["USD"])
+            date = str(data.get("date", "unknown"))
+            _rate_state = (rate, date, now)
+            return _format_rate(rate, date)
+        except Exception as exc:
+            _log.warning("Frankfurter unavailable, using last-known rate: {}", exc)
+            # Note in the response that this is a fallback so the agent can
+            # mention it in the answer if appropriate.
+            return _format_rate(rate, date) + " (cached fallback — live API unavailable)"
 
 
 # ---------- Tool 2: scrape Wikipedia for state info ------------------
@@ -119,18 +131,27 @@ def _state_from_table(code: str) -> str | None:
 @tool
 def lookup_brazilian_state(state_code: str) -> str:
     """Given a 2-letter Brazilian state code (e.g. 'SP'), return the
-    state full name and capital city by scraping Wikipedia. Falls back
-    to a hardcoded table if Wikipedia is unreachable.
-    Use when the user asks for a state's name or capital."""
+    state full name and capital city.
+
+    Answers from the bundled IBGE table first (canonical, 27 entries,
+    O(1)). Wikipedia is only consulted for codes that aren't in the
+    local table — i.e. essentially never. This avoids per-call HTTP
+    latency, scraping fragility, and rate-limit risk for the common path.
+    Use when the user asks for a state's name or capital.
+    """
     code = state_code.strip().upper()[:2]
+    local = _state_from_table(code)
+    if local is not None:
+        return local
+
+    # Code is not in the canonical IBGE table (likely garbage, e.g. "ZZ").
+    # Try Wikipedia as a last-resort scrape in case the user typed an
+    # archaic or alternate code we don't carry.
     url = "https://en.wikipedia.org/wiki/States_of_Brazil"
     try:
         r = requests.get(url, headers={"User-Agent": "Olist/1.0"}, timeout=8)
         r.raise_for_status()
         soup = BeautifulSoup(r.content, "lxml")
-
-        # Each row in the main wikitable lists: flag, coat of arms, name,
-        # code, capital, ... — we find the row whose code matches.
         for row in soup.select("table.wikitable tr"):
             cells = [c.get_text(strip=True) for c in row.find_all(["td", "th"])]
             if code in cells:
@@ -141,11 +162,6 @@ def lookup_brazilian_state(state_code: str) -> str:
     except Exception as exc:
         _log.warning("Wikipedia state lookup failed for {}: {}", code, exc)
 
-    # Scrape failed (network error, layout change, or no match) — try the
-    # hardcoded table.
-    fallback = _state_from_table(code)
-    if fallback is not None:
-        return fallback
     return f"No Brazilian state found for code '{code}'."
 
 

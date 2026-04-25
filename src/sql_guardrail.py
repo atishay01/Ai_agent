@@ -12,13 +12,18 @@ Rules enforced by ``validate_sql``:
      ``REINDEX``, ``COMMENT``, ``SET``, ``RESET``, ``LOCK``.
   4. No stacked statements — only one top-level statement per query.
      (``SELECT 1; DROP TABLE users`` would otherwise be valid SQL.)
+  5. No row-fan-out aggregations (``array_agg``, ``json_agg``,
+     ``string_agg``, ``jsonb_agg``, ``xmlagg``, ``json_object_agg``,
+     ``jsonb_object_agg``). These collapse arbitrarily many rows into a
+     single cell and would otherwise defeat the row cap.
 
 Violations raise ``UnsafeSQLError``. The agent's SQL-execution path
 wraps every ``run()`` call in this check (see ``SafeSQLDatabase``).
 
-In addition, ``enforce_row_cap`` appends ``LIMIT <n>`` to any SELECT
-that has no LIMIT, so a buggy or coerced agent query can't dump whole
-tables (defense-in-depth against data exfiltration).
+In addition, ``enforce_row_cap`` wraps the query in a parenthesised
+subquery and appends ``LIMIT <n>`` on the *outside*. This is robust
+against trailing line comments (``-- …``) and inner ``LIMIT`` clauses
+that could otherwise let the cap be commented out or short-circuited.
 """
 
 from __future__ import annotations
@@ -28,6 +33,21 @@ import re
 import sqlparse
 from sqlparse.sql import Statement
 from sqlparse.tokens import DDL, DML, Keyword
+
+BANNED_AGG_FUNCTIONS: frozenset[str] = frozenset(
+    {
+        # Aggregations that collapse many rows into one cell — they would
+        # let an attacker exfiltrate a whole column past the row cap.
+        "ARRAY_AGG",
+        "JSON_AGG",
+        "JSONB_AGG",
+        "STRING_AGG",
+        "XMLAGG",
+        "JSON_OBJECT_AGG",
+        "JSONB_OBJECT_AGG",
+    }
+)
+
 
 BANNED_KEYWORDS: frozenset[str] = frozenset(
     {
@@ -89,6 +109,22 @@ def _contains_banned_keyword(stmt: Statement) -> str | None:
     return None
 
 
+def _contains_banned_aggregation(stmt: Statement) -> str | None:
+    """Scan every token for a banned row-fan-out aggregation function.
+
+    Anywhere in the parsed statement is enough — there is no legitimate
+    use of ``array_agg``/``json_agg``/etc. against the Olist schema, and
+    permitting them in a CTE or subquery would still let the outer
+    ``LIMIT`` see one giant row.
+    """
+    for tok in stmt.flatten():
+        if tok.ttype is None or tok.ttype is sqlparse.tokens.Name:
+            word = tok.value.upper()
+            if word in BANNED_AGG_FUNCTIONS:
+                return word
+    return None
+
+
 def validate_sql(query: str) -> None:
     """Raise ``UnsafeSQLError`` if ``query`` is not a single safe SELECT.
 
@@ -113,26 +149,34 @@ def validate_sql(query: str) -> None:
     if banned:
         raise UnsafeSQLError(f"banned keyword in query: {banned}")
 
-
-_LIMIT_RE = re.compile(r"\blimit\s+\d+", re.IGNORECASE)
+    banned_agg = _contains_banned_aggregation(stmt)
+    if banned_agg:
+        raise UnsafeSQLError(f"banned aggregation function: {banned_agg} (would bypass row cap)")
 
 
 def enforce_row_cap(query: str, cap: int) -> str:
-    """Append ``LIMIT <cap>`` to a SELECT that has no LIMIT clause.
+    """Wrap the query in a subquery and apply ``LIMIT <cap>`` on the outside.
 
-    Conservative: if any LIMIT (in a subquery, CTE, or the outer query)
-    exists, we leave the query alone — the agent or query author already
-    bounded the result. Aggregate queries (``COUNT``, ``SUM``, ...) are
-    unaffected since they return one row regardless.
+    Wrapping (rather than appending) defends against two bypasses:
+
+      * A trailing line comment — ``SELECT * FROM customers -- end`` —
+        would otherwise consume the appended ``LIMIT`` so Postgres sees
+        no cap at all.
+      * An inner ``LIMIT 1000000`` would be honoured as-is if we just
+        skipped queries that "already had a LIMIT", letting the agent
+        return arbitrarily many rows.
+
+    The outer ``LIMIT`` is always at most as restrictive as any inner
+    ``LIMIT`` the agent supplied (a query that returns 50 rows internally
+    still returns 50 rows when capped at 1000), so there is no
+    correctness loss from always wrapping.
     """
     if cap <= 0:
         return query
     cleaned = query.strip().rstrip(";").strip()
     if not cleaned:
         return query
-    if _LIMIT_RE.search(cleaned):
-        return query
-    return f"{cleaned} LIMIT {cap}"
+    return f"SELECT * FROM (\n{cleaned}\n) AS _capped LIMIT {cap}"
 
 
 # ---------------------------------------------------------------------

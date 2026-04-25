@@ -23,7 +23,7 @@ from slowapi.util import get_remote_address
 
 from agent import ask, clear_session
 from config import settings
-from logging_setup import configure_logging, logger
+from logging_setup import configure_logging, logger, redact
 from metrics import METRICS
 
 configure_logging()
@@ -198,12 +198,18 @@ _QUERY_RATE_LIMIT = settings.rate_limit or "1000000/minute"
 def query(req: QueryRequest, request: Request) -> QueryResponse:
     """Forward the question to the LangChain SQL agent."""
     trace_id = getattr(request.state, "trace_id", uuid.uuid4().hex[:12])
-    bound = log.bind(trace_id=trace_id, question=req.question, session_id=req.session_id)
+    # Question text and session_id are user PII; bind hashes only.
+    bound = log.bind(
+        trace_id=trace_id,
+        q_hash=redact(req.question),
+        q_len=len(req.question),
+        session_hash=redact(req.session_id),
+    )
     bound.info("agent invocation start")
 
     start = time.perf_counter()
     try:
-        result = ask(req.question, session_id=req.session_id)
+        result = ask(req.question, session_id=req.session_id, trace_id=trace_id)
     except Exception as exc:
         bound.exception("agent invocation failed")
         msg = str(exc).lower()
@@ -236,6 +242,7 @@ def query(req: QueryRequest, request: Request) -> QueryResponse:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     elapsed_ms = int((time.perf_counter() - start) * 1000)
+    METRICS.record_latency(elapsed_ms)
     bound.bind(latency_ms=elapsed_ms, answer_len=len(result["answer"])).info("agent invocation ok")
     return QueryResponse(
         question=result["question"],

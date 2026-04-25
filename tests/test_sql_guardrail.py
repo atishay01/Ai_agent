@@ -59,26 +59,56 @@ def test_subclass_is_value_error() -> None:
 # ---------------------------------------------------------------------
 # enforce_row_cap — defense-in-depth row limiter.
 # ---------------------------------------------------------------------
-def test_enforce_row_cap_appends_when_missing() -> None:
+def test_enforce_row_cap_wraps_when_missing() -> None:
+    """The cap is applied on the *outside* of a subquery wrap."""
     out = enforce_row_cap("SELECT * FROM customers", cap=1000)
     assert out.endswith("LIMIT 1000")
+    assert "SELECT * FROM (" in out
+    assert "_capped" in out
 
 
-def test_enforce_row_cap_strips_trailing_semicolon_before_appending() -> None:
+def test_enforce_row_cap_strips_trailing_semicolon_before_wrapping() -> None:
     out = enforce_row_cap("SELECT * FROM customers;", cap=1000)
     assert out.endswith("LIMIT 1000")
+    # No stray semicolon would slip into the inner subquery.
     assert ";" not in out
 
 
-def test_enforce_row_cap_skips_when_limit_present() -> None:
+def test_enforce_row_cap_wraps_even_when_inner_limit_present() -> None:
+    """Inner LIMIT must NOT short-circuit the outer cap.
+
+    Previously the cap-skip optimization let a query like
+    ``SELECT * FROM (... LIMIT 1000000) t`` exfiltrate millions of rows.
+    Wrapping always applies the outer cap; correctness is preserved
+    because the inner LIMIT is the tighter of the two if it's smaller.
+    """
     q = "SELECT * FROM customers LIMIT 50"
-    assert enforce_row_cap(q, cap=1000) == q
+    out = enforce_row_cap(q, cap=1000)
+    assert out.endswith("LIMIT 1000")
+    assert "LIMIT 50" in out  # inner LIMIT preserved verbatim
 
 
-def test_enforce_row_cap_skips_when_limit_in_subquery() -> None:
-    """Conservative: any LIMIT (even inner) suppresses the auto-cap."""
+def test_enforce_row_cap_wraps_inner_subquery_with_limit() -> None:
     q = "SELECT * FROM (SELECT id FROM orders LIMIT 5) sub"
-    assert enforce_row_cap(q, cap=1000) == q
+    out = enforce_row_cap(q, cap=1000)
+    assert out.endswith("LIMIT 1000")
+    assert "LIMIT 5" in out
+
+
+def test_enforce_row_cap_defeats_trailing_line_comment() -> None:
+    """A trailing ``-- comment`` must not consume the outer LIMIT.
+
+    With string-append, ``SELECT * FROM customers -- end`` + ``LIMIT 100``
+    became ``SELECT * FROM customers -- end LIMIT 100`` and Postgres
+    treated the LIMIT as part of the line comment, dumping the whole
+    table. Wrapping puts the LIMIT outside the comment's scope.
+    """
+    q = "SELECT * FROM customers -- end of query"
+    out = enforce_row_cap(q, cap=100)
+    # The comment ends at its own newline (inside the wrap), and LIMIT
+    # is on a fresh outer line so Postgres always sees it.
+    last_line = out.rstrip().splitlines()[-1]
+    assert last_line.strip() == ") AS _capped LIMIT 100"
 
 
 def test_enforce_row_cap_handles_empty_input() -> None:
@@ -89,6 +119,26 @@ def test_enforce_row_cap_handles_empty_input() -> None:
 def test_enforce_row_cap_disabled_when_cap_zero() -> None:
     q = "SELECT * FROM customers"
     assert enforce_row_cap(q, cap=0) == q
+
+
+# ---------------------------------------------------------------------
+# Aggregation-as-exfil — banned at validate_sql time.
+# ---------------------------------------------------------------------
+@pytest.mark.parametrize(
+    "query",
+    [
+        "SELECT array_agg(customer_unique_id) FROM customers",
+        "SELECT json_agg(t) FROM customers t",
+        "SELECT string_agg(customer_unique_id, ',') FROM customers",
+        "SELECT jsonb_agg(o) FROM orders o",
+        # CTE form — banned anywhere in the parsed statement.
+        "WITH x AS (SELECT array_agg(id) AS ids FROM orders) SELECT * FROM x",
+    ],
+)
+def test_validate_sql_blocks_row_fanout_aggregations(query: str) -> None:
+    with pytest.raises(UnsafeSQLError) as excinfo:
+        validate_sql(query)
+    assert "agg" in str(excinfo.value).lower()
 
 
 # ---------------------------------------------------------------------
