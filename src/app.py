@@ -9,10 +9,14 @@ Two views in one app:
 
 from __future__ import annotations
 
+import ast
 import contextlib
 import os
+import re
 import uuid
+from datetime import date, datetime
 
+import pandas as pd
 import requests
 import streamlit as st
 
@@ -20,6 +24,99 @@ import dashboard
 
 API_URL = os.environ.get("API_URL", "http://localhost:8000/query")
 SESSION_DELETE_URL = os.environ.get("SESSION_DELETE_URL", "http://localhost:8000/session")
+
+
+# ---------------------------------------------------------------------
+# Chart auto-detection from agent intermediate steps.
+#
+# When the agent runs a SELECT, LangChain returns the result as a
+# string-repr of a list of tuples, e.g. "[('2017-01', 134567.89), ...]".
+# If that result has a date-or-text first column and a numeric second
+# column, we render it as a line or bar chart inline with the answer.
+# ---------------------------------------------------------------------
+def _parse_observation(obs: str) -> list[tuple] | None:
+    """Try to recover a list of tuples from the agent's tool observation.
+
+    LangChain's SQLDatabase returns rows as ``str(list_of_tuples)``. We
+    re-parse defensively — any failure means we silently skip charting.
+    """
+    if not obs or not obs.strip().startswith("["):
+        return None
+    try:
+        parsed = ast.literal_eval(obs.strip())
+    except (ValueError, SyntaxError):
+        return None
+    if not isinstance(parsed, list) or not parsed:
+        return None
+    # Every row should be a tuple/list of the same length.
+    if not all(isinstance(r, tuple | list) for r in parsed):
+        return None
+    widths = {len(r) for r in parsed}
+    if len(widths) != 1 or widths == {1}:
+        return None
+    return [tuple(r) for r in parsed]
+
+
+def _looks_like_date(value) -> bool:
+    if isinstance(value, date | datetime):
+        return True
+    if isinstance(value, str):
+        # 2017-01, 2017-01-15, 2017
+        return bool(re.match(r"^\d{4}(-\d{2})?(-\d{2})?$", value.strip()))
+    return False
+
+
+def _last_sql_result(steps: list[dict]) -> tuple[str | None, list[tuple] | None]:
+    """Return (sql_text, parsed_rows) from the most recent SQL step."""
+    for step in reversed(steps or []):
+        tool = (step.get("tool") or "").lower()
+        if "sql" not in tool and "query" not in tool:
+            continue
+        rows = _parse_observation(step.get("observation", ""))
+        if rows:
+            return step.get("tool_input", ""), rows
+    return None, None
+
+
+def render_chart_if_useful(steps: list[dict]) -> None:
+    """If the agent's last SQL result is chartable, render a chart.
+
+    Heuristics, kept conservative (false-positive charts annoy more
+    than they help):
+
+      * line chart  -> first column looks like a date/month, ≥ 3 rows,
+                       second column is numeric
+      * bar chart   -> first column is text, ≤ 20 rows, second column
+                       is numeric
+      * otherwise   -> no chart
+    """
+    _, rows = _last_sql_result(steps)
+    if not rows or len(rows) < 2:
+        return
+
+    first_col = [r[0] for r in rows]
+    second_col = [r[1] for r in rows]
+
+    # Second column must be numeric for either chart type.
+    if not all(isinstance(v, int | float) for v in second_col):
+        return
+
+    df = pd.DataFrame(rows).iloc[:, :2]
+    df.columns = ["x", "y"]
+
+    # Time-series? First column dates → line chart.
+    if len(rows) >= 3 and all(_looks_like_date(v) for v in first_col):
+        df = df.sort_values("x")
+        st.line_chart(df.set_index("x"), height=260)
+        return
+
+    # Categorical ranking? Text labels with bounded count → bar chart.
+    if len(rows) <= 20 and all(isinstance(v, str) for v in first_col):
+        st.bar_chart(df.set_index("x"), height=260, horizontal=True)
+        return
+
+    # Otherwise leave the trace panel as the only visualisation.
+
 
 # ---------------------------------------------------------------------
 st.set_page_config(
@@ -140,6 +237,10 @@ with tab_chat:
                     if badges:
                         st.caption("  ·  ".join(badges))
                 steps = msg.get("steps") or []
+                # Auto-chart: render a line/bar inline if the last SQL
+                # result has a chartable shape. Silent no-op otherwise.
+                if steps:
+                    render_chart_if_useful(steps)
                 if steps:
                     with st.expander(
                         f"🔍 Trace ({len(steps)} step{'s' if len(steps) != 1 else ''})",
@@ -205,6 +306,9 @@ with tab_chat:
                     badges.append(f"🔢 {tt} tokens")
                 if badges:
                     st.caption("  ·  ".join(badges))
+            # Auto-chart inline (live render) when the result is chartable.
+            if steps:
+                render_chart_if_useful(steps)
             if steps:
                 with st.expander(
                     f"🔍 Trace ({len(steps)} step{'s' if len(steps) != 1 else ''})",
