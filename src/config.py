@@ -28,12 +28,20 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # --- Postgres ---------------------------------------------------
+    # --- Postgres (admin — used by the ETL) -------------------------
     pg_host: str = Field(default="localhost")
     pg_port: int = Field(default=5432)
     pg_user: str = Field(default="postgres")
     pg_password: SecretStr = Field(default=SecretStr(""))
     pg_database: str = Field(default="olist_db")
+
+    # --- Postgres (read-only — used by the agent + dashboard) ------
+    # Defence-in-depth: even if the SQL guardrail had a bug, this role
+    # only has SELECT permission. Falls back to ``pg_user`` if unset so
+    # dev/test setups keep working without seeding the role first.
+    # Seed with: psql -U postgres -d olist_db -f src/seed_readonly_user.sql
+    pg_user_agent: str = Field(default="")
+    pg_password_agent: SecretStr = Field(default=SecretStr(""))
 
     # --- Groq / LLM -------------------------------------------------
     groq_api_key: SecretStr = Field(default=SecretStr(""))
@@ -89,10 +97,29 @@ class Settings(BaseSettings):
     # ----------------------------------------------------------------
     @property
     def database_url(self) -> str:
-        """SQLAlchemy connection URL for Postgres."""
+        """SQLAlchemy connection URL — admin user (write access).
+
+        Used by the ETL, which needs CREATE/DROP/INSERT.
+        """
         return (
             f"postgresql+psycopg2://{self.pg_user}:"
             f"{self.pg_password.get_secret_value()}"
+            f"@{self.pg_host}:{self.pg_port}/{self.pg_database}"
+        )
+
+    @property
+    def agent_database_url(self) -> str:
+        """SQLAlchemy connection URL — read-only role.
+
+        Used by the agent and the dashboard. If ``pg_user_agent`` is
+        unset (dev mode, no seed), falls back to the admin URL so the
+        project still runs.
+        """
+        if not self.pg_user_agent:
+            return self.database_url
+        return (
+            f"postgresql+psycopg2://{self.pg_user_agent}:"
+            f"{self.pg_password_agent.get_secret_value()}"
             f"@{self.pg_host}:{self.pg_port}/{self.pg_database}"
         )
 

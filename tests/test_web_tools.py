@@ -31,7 +31,6 @@ def _reset_rate_state():
         ("2 + 2", "= 4"),
         ("5921678.12 * 0.2009", "= 1,189,665.13"),
         ("100 - 30", "= 70"),
-        ("2 ** 10", "= 1024"),
         ("-(5 + 3)", "= -8"),
         ("10 / 4", "= 2.50"),
     ],
@@ -50,6 +49,11 @@ def test_calculate_valid(expr: str, expected_fragment: str) -> None:
         "a + 1",  # name
         "print(1)",
         "",
+        # Pow is intentionally NOT in _OPS — `2 ** 1_000_000_000` would
+        # otherwise hang the process on a hostile prompt and the agent
+        # has no legitimate use for exponentiation here.
+        "2 ** 10",
+        "10 ** 100",
     ],
 )
 def test_calculate_rejects_unsafe(expr: str) -> None:
