@@ -13,7 +13,7 @@ import pandas as pd
 import streamlit as st
 from sqlalchemy import text
 
-from db import get_engine
+from db import get_agent_engine
 
 
 # ---------------------------------------------------------------------
@@ -21,7 +21,8 @@ from db import get_engine
 # ---------------------------------------------------------------------
 @st.cache_data(ttl=3600, show_spinner=False)
 def _query(sql: str) -> pd.DataFrame:
-    with get_engine().connect() as conn:
+    # Read-only role — dashboard never writes.
+    with get_agent_engine().connect() as conn:
         return pd.read_sql(text(sql), conn)
 
 

@@ -23,7 +23,7 @@ import session_history
 from cache import CACHE
 from callbacks import TokenUsageCallback
 from config import settings
-from db import get_connection_string
+from db import get_agent_connection_string
 from logging_setup import logger, redact
 from metrics import METRICS
 from sql_guardrail import UnsafeSQLError, enforce_row_cap, format_sql_error, validate_sql
@@ -187,8 +187,11 @@ A: São Paulo (SP) has the most late deliveries with 2,123 orders flagged
 
 
 def _db() -> SafeSQLDatabase:
+    # Connect with the read-only role. The SQL guardrail is the first
+    # line of defence; the role is the second — even if the guardrail
+    # had a bug, the database itself would refuse a write.
     return SafeSQLDatabase.from_uri(
-        get_connection_string(),
+        get_agent_connection_string(),
         include_tables=[
             "customers",
             "sellers",
