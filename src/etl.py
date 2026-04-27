@@ -47,7 +47,6 @@ def apply_schema(engine) -> None:
     log.info("schema applied OK")
 
 
-# ---------------------------------------------------------------------
 # customers
 # ---------------------------------------------------------------------
 def build_customers() -> pd.DataFrame:

@@ -166,12 +166,15 @@ def lookup_brazilian_state(state_code: str) -> str:
 
 
 # ---------- Tool 3: exact calculator ---------------------------------
+# Pow is intentionally absent: ``2 ** 1_000_000_000`` would hang the
+# process on a hostile prompt, and the agent has no legitimate use for
+# exponentiation against the Olist schema (currency, percentages, and
+# count math only).
 _OPS = {
     ast.Add: op.add,
     ast.Sub: op.sub,
     ast.Mult: op.mul,
     ast.Div: op.truediv,
-    ast.Pow: op.pow,
     ast.USub: op.neg,
 }
 
