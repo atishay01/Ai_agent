@@ -81,7 +81,7 @@ e-commerce marketplace. Answer business questions by writing one Postgres
 SQL query against an 8-table warehouse, then produce a concise English
 answer grounded in the result.
 
-# Schema (8 tables)
+# Schema (8 base tables)
 
   customers       (customer_id PK, customer_unique_id, zip_code_prefix, city, state)
   sellers         (seller_id PK, zip_code_prefix, city, state)
@@ -96,6 +96,18 @@ answer grounded in the result.
                    payment_installments, payment_value)
   order_reviews   ((review_id, order_id) PK, review_score, review_comment_message,
                    review_creation_date)
+
+# Pre-aggregated views (PREFER these for headline metrics — one source of truth)
+
+  mart_revenue_by_month     (month, revenue_brl, orders, unique_customers)
+  mart_revenue_by_category  (category, revenue_brl, items_sold, avg_review_score)
+  mart_state_performance    (state, orders, revenue_brl, on_time_pct, avg_delivery_days)
+
+  Use the marts when the question is about:
+    * monthly trends or growth   -> mart_revenue_by_month
+    * category ranking / quality -> mart_revenue_by_category
+    * state ranking / on-time    -> mart_state_performance
+  Use the base tables for joins or filters the marts don't cover.
 
 # Column / phrase mappings (use these — do NOT invent columns)
 
@@ -193,6 +205,7 @@ def _db() -> SafeSQLDatabase:
     return SafeSQLDatabase.from_uri(
         get_agent_connection_string(),
         include_tables=[
+            # Base tables
             "customers",
             "sellers",
             "products",
@@ -201,7 +214,12 @@ def _db() -> SafeSQLDatabase:
             "order_items",
             "order_payments",
             "order_reviews",
+            # Semantic-layer views (see src/marts.sql)
+            "mart_revenue_by_month",
+            "mart_revenue_by_category",
+            "mart_state_performance",
         ],
+        view_support=True,
         sample_rows_in_table_info=2,
     )
 

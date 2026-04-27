@@ -44,18 +44,7 @@ def _kpis() -> dict:
 
 def _latest_month_revenue() -> tuple[str, float, float]:
     """Revenue for the last full month in data + month-over-month delta (%)."""
-    df = _query(
-        """
-        SELECT
-            DATE_TRUNC('month', o.order_purchase_timestamp)::date AS month,
-            SUM(oi.price + oi.freight_value)::numeric             AS revenue
-        FROM order_items oi
-        JOIN orders o USING (order_id)
-        WHERE o.order_purchase_timestamp IS NOT NULL
-        GROUP BY 1
-        ORDER BY 1
-        """
-    )
+    df = _query("SELECT month, revenue_brl AS revenue FROM mart_revenue_by_month ORDER BY month")
     if len(df) < 2:
         return ("n/a", 0.0, 0.0)
     # Drop the partial last month (trailing edge of dataset) so MoM is fair.
@@ -68,30 +57,14 @@ def _latest_month_revenue() -> tuple[str, float, float]:
 
 
 def _monthly_revenue() -> pd.DataFrame:
-    return _query(
-        """
-        SELECT
-            DATE_TRUNC('month', o.order_purchase_timestamp)::date AS month,
-            ROUND(SUM(oi.price + oi.freight_value)::numeric, 2)   AS revenue_brl,
-            COUNT(DISTINCT o.order_id)                            AS orders
-        FROM order_items oi
-        JOIN orders o USING (order_id)
-        WHERE o.order_purchase_timestamp IS NOT NULL
-        GROUP BY 1
-        ORDER BY 1
-        """
-    )
+    return _query("SELECT month, revenue_brl, orders FROM mart_revenue_by_month ORDER BY month")
 
 
 def _revenue_by_category(limit: int = 10) -> pd.DataFrame:
     return _query(
         f"""
-        SELECT
-            COALESCE(p.category_name_en, 'uncategorised') AS category,
-            ROUND(SUM(oi.price + oi.freight_value)::numeric, 2) AS revenue_brl
-        FROM order_items oi
-        JOIN products p USING (product_id)
-        GROUP BY 1
+        SELECT category, revenue_brl
+        FROM mart_revenue_by_category
         ORDER BY revenue_brl DESC
         LIMIT {limit}
         """
@@ -101,14 +74,8 @@ def _revenue_by_category(limit: int = 10) -> pd.DataFrame:
 def _revenue_by_state(limit: int = 10) -> pd.DataFrame:
     return _query(
         f"""
-        SELECT
-            c.state,
-            ROUND(SUM(oi.price + oi.freight_value)::numeric, 2) AS revenue_brl,
-            COUNT(DISTINCT o.order_id)                          AS orders
-        FROM order_items oi
-        JOIN orders    o USING (order_id)
-        JOIN customers c USING (customer_id)
-        GROUP BY 1
+        SELECT state, revenue_brl, orders
+        FROM mart_state_performance
         ORDER BY revenue_brl DESC
         LIMIT {limit}
         """

@@ -24,6 +24,7 @@ log = logger.bind(component="etl")
 # ---------------------------------------------------------------------
 RAW_DIR = PROJECT_ROOT / "data" / "raw"
 SCHEMA_FILE = PROJECT_ROOT / "src" / "schema.sql"
+MARTS_FILE = PROJECT_ROOT / "src" / "marts.sql"
 
 
 def profile(df: pd.DataFrame, name: str) -> None:
@@ -45,6 +46,22 @@ def apply_schema(engine) -> None:
     with engine.begin() as conn:
         conn.execute(text(sql))
     log.info("schema applied OK")
+
+
+def apply_marts(engine) -> None:
+    """Create the semantic-layer views.
+
+    Runs after data is loaded so the views actually have rows underneath
+    them. Idempotent: marts.sql DROPs first.
+    """
+    if not MARTS_FILE.exists():
+        log.warning("marts file not found at {} — skipping", MARTS_FILE)
+        return
+    log.info("applying marts (semantic-layer views)")
+    sql = MARTS_FILE.read_text(encoding="utf-8")
+    with engine.begin() as conn:
+        conn.execute(text(sql))
+    log.info("marts applied OK")
 
 
 # customers
@@ -352,6 +369,9 @@ def main() -> None:
             "order_reviews": len(order_reviews),
         },
     )
+
+    # Build the semantic-layer views on top of the loaded data.
+    apply_marts(engine)
 
     log.info("ETL complete in {elapsed:.1f}s", elapsed=time.time() - t0)
 
