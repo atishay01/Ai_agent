@@ -78,3 +78,104 @@
   question: What is the highest review score value present in order_reviews?
   contains: ["5"]
   max_latency_ms: 15000
+
+# ---------------------------------------------------------------------
+# Time-series / aggregate-over-month
+# ---------------------------------------------------------------------
+- id: peak_revenue_month
+  question: Which calendar month had the highest total revenue across the dataset? Answer with YYYY-MM only.
+  contains: ["2017-11"]
+  max_latency_ms: 30000
+
+- id: orders_in_2017
+  question: How many orders were purchased in calendar year 2017?
+  contains: ["45,101"]
+  max_latency_ms: 30000
+
+- id: latest_purchase_year
+  question: What is the latest year an order was purchased in the dataset?
+  contains: ["2018"]
+  max_latency_ms: 15000
+
+# ---------------------------------------------------------------------
+# Multi-table joins (3+ tables)
+# ---------------------------------------------------------------------
+- id: top_seller_state_revenue
+  question: Which seller state has the highest total order_items revenue (price + freight_value)? Answer with the 2-letter state code only.
+  contains: ["SP"]
+  max_latency_ms: 30000
+
+- id: avg_review_score_health_beauty
+  question: What is the average review score for orders that contained at least one product in the health_beauty category? Round to one decimal.
+  contains: ["4.1"]
+  max_latency_ms: 30000
+
+- id: top_state_credit_card
+  question: Which Brazilian state had the most credit_card payments? Answer with the 2-letter state code only.
+  contains: ["SP"]
+  max_latency_ms: 30000
+
+# ---------------------------------------------------------------------
+# Marts (semantic-layer views) — agent should prefer these
+# ---------------------------------------------------------------------
+- id: mart_top_state_revenue
+  question: Using the state-performance summary, which state has the highest revenue? Answer with the 2-letter code only.
+  contains: ["SP"]
+  max_latency_ms: 20000
+
+- id: mart_top_category
+  question: Which product category has the highest total revenue?
+  contains: ["health_beauty"]
+  max_latency_ms: 20000
+
+# ---------------------------------------------------------------------
+# Currency conversion (uses the BRL/USD tool + calculator)
+# ---------------------------------------------------------------------
+- id: total_revenue_usd_approx
+  question: What is the total order_items revenue (price + freight_value) in US dollars? Use the live exchange rate. Answer should mention USD or $.
+  contains: ["USD"]
+  max_latency_ms: 30000
+
+# ---------------------------------------------------------------------
+# NULL handling
+# ---------------------------------------------------------------------
+- id: orders_without_delivery_date
+  question: How many orders have a NULL order_delivered_customer_date?
+  contains: ["2,965"]
+  max_latency_ms: 30000
+
+- id: avg_delivery_days_excluding_nulls
+  question: What is the average delivery_days for orders where delivery_days is not null? Round to one decimal place.
+  contains: ["12.0"]
+  max_latency_ms: 20000
+
+# ---------------------------------------------------------------------
+# Edge / boundary
+# ---------------------------------------------------------------------
+- id: count_distinct_payment_types
+  question: How many distinct payment_type values appear in order_payments?
+  contains: ["5"]
+  max_latency_ms: 15000
+
+- id: count_distinct_states
+  question: How many distinct customer states are represented in customers? (Brazilian states.)
+  contains: ["27"]
+  max_latency_ms: 15000
+
+- id: count_unique_customers
+  question: How many unique customers (customer_unique_id) are in the database?
+  contains: ["96,096"]
+  max_latency_ms: 15000
+
+# ---------------------------------------------------------------------
+# Output-formatting checks (relies on the SYSTEM_PROMPT formatting rules)
+# ---------------------------------------------------------------------
+- id: format_orders_with_commas
+  question: How many orders are in the database? Format the number with commas.
+  contains: ["99,441"]
+  max_latency_ms: 15000
+
+- id: format_brl_revenue
+  question: What is the all-time total order_items revenue in Brazilian reais? Format as R$ with thousands separators.
+  contains: ["R$"]
+  max_latency_ms: 30000
