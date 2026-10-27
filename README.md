@@ -83,7 +83,7 @@ Foreign keys and indexes on all join columns. Full DDL in
 | **Structured logging**   | Loguru JSON to `logs/app.log`, with end-to-end `trace_id` correlation across api → agent → outbound LLM calls. Question text and `session_id` are sha256-hashed (12-char prefix) before binding — the literal value never lands on disk. |
 | **Health check**         | `/health` endpoint used by the Docker `HEALTHCHECK`.      |
 | **Trace panel**          | Streamlit renders `intermediate_steps` with SQL syntax highlighting. |
-| **Golden eval suite**    | `eval/run_eval.py` runs 14 cases end-to-end, prints pass/fail + latency + $. |
+| **Golden eval suite**    | `eval/run_eval.py` runs 30 cases end-to-end, prints pass/fail + latency + $. |
 | **CI**                   | GitHub Actions: ruff + black + pytest on every push.      |
 
 ## Quick start — Docker (recommended)
@@ -236,7 +236,7 @@ Groq are reachable from the runner.
 │   └── dashboard.py       # Dashboard queries + rendering (direct Postgres)
 ├── tests/                 # ~130 pytest cases; external services mocked
 ├── eval/
-│   ├── golden.yaml        # 14-case golden set
+│   ├── golden.yaml        # 30-case golden set
 │   └── run_eval.py        # CLI harness, prints report + exits non-zero on fail
 ├── .github/workflows/ci.yml   # ruff + black + pytest on every push
 ├── Dockerfile             # Multi-stage (builder + slim runtime, non-root user)
